@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Arrow</title>
+<style>
+
+  /* ===========================
+   MAIN MENU
+=========================== */
+
+#menuScreen{
+    position:fixed;
+    inset:0;
+    background:#d9d8e2;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    z-index:9999;
+}
+.menu-box{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:18px;
+}
+.menu-box h1{
+    margin:0 0 16px;
+    color:#2c2f4a;
+    font-size:22px;
+    font-weight:900;
+    letter-spacing:5px;
+}
+.menu-box button{
+
+    background:none;
+    border:none;
+
+    color:#2c2f4a;
+
+    font-size:14px;
+    font-weight:700;
+
+    cursor:pointer;
+
+    padding:2px 10px;
+
+    transition:.15s;
+
+}
+.menu-box button:hover{
+    color:#4d63ff;
+    transform:translateX(8px);
+
+}
+.menu-box button:active{
+    transform:translateX(4px);
+}
+  :root{
+    --bg:#d9d8e2;
+    --board-bg:#dedde6;
+    --pipe:#2c2f4a;
+    --dot: rgba(44,47,74,0.28);
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background: var(--bg);
+    overflow:hidden;
+    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+    touch-action: none;
+  }
+  #wrap{
+    width:100%; height:100%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px;
+  }
+  #title{
+    color:#2c2f4a;
+    letter-spacing: 10px;
+    font-weight:800;
+    font-size: 26px;
+    user-select:none;
+  }
+#boardFrame{
+    position:relative;
+    padding:10px;
+    border-radius:18px;
+    background:var(--board-bg);
+    box-shadow:
+        0 0 0 1px rgba(0,0,0,.03) inset,
+        0 16px 36px rgba(30,25,60,.18);
+}
+  #board{
+    display:block;
+    border-radius: 10px;
+  }
+#menuBtn{
+    position:absolute;
+    top:10px;
+    right:10px;
+
+    width:25px;
+    height:25px;
+
+    border:none;
+    border-radius:8px;
+
+    background:#2c2f4a;
+    color:#fff;
+
+    font-size:15px;
+    font-weight:bold;
+
+    display:flex;
+    justify-content:center;
+    align-items:center;
+
+    cursor:pointer;
+
+    z-index:100;
+
+    box-shadow:0 2px 8px rgba(0,0,0,.25);
+
+    transition:.15s;
+}
+#menuBtn:hover{
+    transform:scale(1.05);
+}
+#menuBtn:active{
+    transform:scale(.95);
+}
+#menuBtn:hover{
+    transform:scale(1.05);
+}
+#menuBtn:active{
+    transform:scale(.95);
+}
+#topBar{
+
+    width:100%;
+
+    max-width:520px;
+
+    display:flex;
+
+    justify-content:center;
+
+    align-items:center;
+
+    position:relative;
+
+    margin-bottom:12px;
+
+}
+
+#lives{
+
+    color:#e53935;
+
+    font-size:28px;
+
+    font-weight:bold;
+
+    letter-spacing:4px;
+
+}
+
+#menuBtn{
+
+    position:fixed;
+
+    right:100;
+
+    width:38px;
+
+    height:38px;
+
+    border:none;
+
+    border-radius:10px;
+
+    background:#2c2f4a;
+
+    color:white;
+
+    font-size:20px;
+
+    cursor:pointer;
+
+}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="topBar">
+    <div id="lives">
+        ❤ ❤ ❤
+    </div>
+    <button id="menuBtn">☰</button>
+</div>
+  <div id="boardFrame">
+          <canvas id="board"></canvas>
+</div>
+
+  </div>
+</div>
+
+ <div id="menuScreen">
+    <div class="menu-box">
+
+        <h1>ARROW PUZZLE</h1>
+        <button id="resumeBtn">▶ Resume</button>
+
+        <button id="newBtn">🆕 New Game</button>
+
+        <button id="levelBtn">🏆 Level</button>
+
+        <button id="modeBtn">🎮 Mode</button>
+
+        <button id="muteBtn">🔊 Sound</button>
+
+        <button id="exitBtn">❌ Exit</button>
+     </div>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+
+  // ---- Config (tweak freely later) ----
+  const COLS = 10;
+  const ROWS = 15;
+  const PIPE_COLOR = '#2c2f4a';
+  const MAX_STEPS = 13;          // hard cap on how many cells one path can cover
+  let lives = 3;
+  let gameStarted = false;
+
+  const DIRS = {
+    right: {dx:1, dy:0},
+    down:  {dx:0, dy:1},
+    left:  {dx:-1,dy:0},
+    up:    {dx:0, dy:-1},
+  };
+  const DIR_NAMES = Object.keys(DIRS);
+  const OPPOSITE = {right:'left', left:'right', up:'down', down:'up'};
+
+         function showMenu(){
+
+            document.getElementById("menuScreen").style.display = "flex";
+
+            document.getElementById("resumeBtn").style.display =
+                gameStarted ? "block" : "none";
+
+      }
+
+        function hideMenu(){
+
+            document.getElementById("menuScreen").style.display="none";
+
+        }
+
+        document.getElementById("resumeBtn").onclick=()=>{
+
+      hideMenu();
+
+      requestDraw();
+
+        };
+document.getElementById("newBtn").onclick = startNewGame;
+
+       function startNewGame() {
+
+              lives = 3;
+              updateLives();
+              leaving = [];
+              flashing = new Map();
+              const layout = buildLayout();
+              grid = layout.grid;
+              pathsMap = new Map(
+                  layout.paths.map(p => [p.id, p])
+              );
+              draw(performance.now());
+              hideMenu();
+          }
+                    
+        document.getElementById("newBtn").onclick = () => {
+
+              gameStarted = true;
+
+                startNewGame();
+
+
+          };
+        function updateLives(){
+           document.getElementById("lives").textContent =
+             "❤ ".repeat(lives).trim();
+        }
+
+        document.getElementById("levelBtn").onclick=()=>{
+
+            alert("Coming Soon");
+
+        };
+
+        document.getElementById("modeBtn").onclick=()=>{
+
+            alert("Coming Soon");
+
+        };
+
+        document.getElementById("muteBtn").onclick=()=>{
+
+            alert("Coming Soon");
+
+        };
+
+        document.getElementById("exitBtn").onclick=()=>{
+
+            alert("Exit");
+
+        };
+        document.getElementById("menuBtn").onclick = () => {
+
+            showMenu();
+
+        };
+
+  function shuffle(arr){
+    for(let i=arr.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [arr[i],arr[j]]=[arr[j],arr[i]];
+    }
+    return arr;
+  }
+
+  function directionBetween(r0,c0,r1,c1){
+    const dr = r1-r0, dc = c1-c0;
+    for(const name of DIR_NAMES){
+      const d = DIRS[name];
+      if(d.dx===dc && d.dy===dr) return name;
+    }
+    return null;
+  }
+
+  // flips which end of a path is the head, without changing which cells it covers
+  function flipPath(path){
+    const cells = path.cells.slice().reverse();
+    let headDir;
+    if(cells.length >= 2){
+      const [r0,c0] = cells[cells.length-2];
+      const [r1,c1] = cells[cells.length-1];
+      headDir = directionBetween(r0,c0,r1,c1);
+    } else {
+      headDir = OPPOSITE[path.headDir];
+    }
+    return {id: path.id, cells, headDir};
+  }
+
+  function edgeMatches(r,c,dir){
+    if(dir==='up') return r===0;
+    if(dir==='down') return r===ROWS-1;
+    if(dir==='left') return c===0;
+    if(dir==='right') return c===COLS-1;
+    return false;
+  }
+
+  // RULE: an arrow's head may never touch its own body/tail - a path may never
+  // become edge-adjacent to another cell of itself, except its immediate chain neighbour
+  function wouldTouchSelf(grid, pathId, nr, nc, r, c){
+    for(const name of DIR_NAMES){
+      const d = DIRS[name];
+      const ar = nr+d.dy, ac = nc+d.dx;
+      if(ar===r && ac===c) continue; // the connecting cell we just came from - always fine
+      if(ar<0||ar>=ROWS||ac<0||ac>=COLS) continue;
+      if(grid[ar][ac] === pathId) return true;
+    }
+    return false;
+  }
+
+  // ---- raw generation: partition the grid into bent, non-overlapping pipe paths ----
+  function rawGenerate(){
+    const grid = Array.from({length: ROWS}, () => Array(COLS).fill(-1));
+    const paths = [];
+
+    let cellOrder = [];
+    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) cellOrder.push([r,c]);
+    shuffle(cellOrder);
+
+    for(const [sr,sc] of cellOrder){
+      if(grid[sr][sc] !== -1) continue;
+
+      const pathId = paths.length;
+      const cells = [[sr,sc]];
+      grid[sr][sc] = pathId;
+      let lastDir = null;
+
+      while(cells.length < MAX_STEPS){
+        const [r,c] = cells[cells.length-1];
+
+        const candidates = [];
+        for(const name of DIR_NAMES){
+          const d = DIRS[name];
+          const nr = r+d.dy, nc = c+d.dx;
+          if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+          if(grid[nr][nc] !== -1) continue;
+          if(lastDir && name === OPPOSITE[lastDir]) continue; // never backtrack
+          if(wouldTouchSelf(grid, pathId, nr, nc, r, c)) continue; // head/body must never touch itself
+          let w = 3;                    // favour turning over continuing straight
+          if(lastDir === name) w = 1;
+          candidates.push({name, d, nr, nc, w});
+        }
+        if(candidates.length === 0) break;
+
+        // minimum arrow length = 3 cells
+         // Minimum arrow length = 3 points (3 cells)
+          // The generator is not allowed to stop until the arrow has at least 3 cells.
+          if (cells.length > 3) {
+
+              const stopChance = 0.10 + (cells.length - 3) * 0.045;
+
+              if (Math.random() < stopChance)
+                  break;
+          }
+
+        const totalW = candidates.reduce((s,x)=>s+x.w,0);
+        let r2 = Math.random()*totalW;
+        let pick = candidates[0];
+        for(const cand of candidates){ if(r2 < cand.w){ pick = cand; break; } r2 -= cand.w; }
+
+        cells.push([pick.nr, pick.nc]);
+        grid[pick.nr][pick.nc] = pathId;
+        lastDir = pick.name;
+      }
+
+      const headDir = lastDir || DIR_NAMES[Math.floor(Math.random()*DIR_NAMES.length)];
+      paths.push({id: pathId, cells, headDir});
+    }
+
+    return {grid, paths};
+  }
+
+  // RULE: two arrows sharing a row/column can never point straight at one
+  // another head-to-head, no matter how far apart they are
+  function findConflicts(paths){
+    const conflicts = [];
+    const byRow = new Map(), byCol = new Map();
+    for(const p of paths){
+      const [r,c] = p.cells[p.cells.length-1];
+      if(p.headDir === 'left' || p.headDir === 'right'){
+        if(!byRow.has(r)) byRow.set(r, []);
+        byRow.get(r).push({p, c});
+      }
+      if(p.headDir === 'up' || p.headDir === 'down'){
+        if(!byCol.has(c)) byCol.set(c, []);
+        byCol.get(c).push({p, r});
+      }
+    }
+    for(const [, arr] of byRow){
+      for(let i=0;i<arr.length;i++) for(let j=i+1;j<arr.length;j++){
+        const A = arr[i], B = arr[j];
+        let leftOne=null, rightOne=null;
+        if(A.p.headDir==='right' && B.p.headDir==='left'){ rightOne=A; leftOne=B; }
+        else if(A.p.headDir==='left' && B.p.headDir==='right'){ rightOne=B; leftOne=A; }
+        else continue;
+        if(rightOne.c < leftOne.c) conflicts.push([rightOne.p.id, leftOne.p.id]);
+      }
+    }
+    for(const [, arr] of byCol){
+      for(let i=0;i<arr.length;i++) for(let j=i+1;j<arr.length;j++){
+        const A = arr[i], B = arr[j];
+        let topOne=null, bottomOne=null;
+        if(A.p.headDir==='down' && B.p.headDir==='up'){ topOne=A; bottomOne=B; }
+        else if(A.p.headDir==='up' && B.p.headDir==='down'){ topOne=B; bottomOne=A; }
+        else continue;
+        if(topOne.r < bottomOne.r) conflicts.push([topOne.p.id, bottomOne.p.id]);
+      }
+    }
+    return conflicts;
+  }
+
+  // resolve "face to face" conflicts by flipping one arrow of each pair, one at a time
+  function resolveConflicts(paths, protectedId){
+    const byId = new Map(paths.map(p => [p.id, p]));
+    const flipCounts = new Map();
+    for(let iter=0; iter<2000; iter++){
+      const conflicts = findConflicts([...byId.values()]);
+      if(conflicts.length === 0) return {paths: [...byId.values()], ok: true};
+      const [a,b] = conflicts[0];
+      const pa = byId.get(a), pb = byId.get(b);
+      let flipId;
+      if(a === protectedId) flipId = b;
+      else if(b === protectedId) flipId = a;
+      else {
+        const ca = flipCounts.get(a) || 0, cb = flipCounts.get(b) || 0;
+        if(ca !== cb) flipId = ca < cb ? a : b;
+        else flipId = pa.cells.length <= pb.cells.length ? a : b; // flip the shorter one: less likely to cascade
+      }
+      byId.set(flipId, flipPath(byId.get(flipId)));
+      flipCounts.set(flipId, (flipCounts.get(flipId)||0) + 1);
+    }
+    return {paths: [...byId.values()], ok: false};
+  }
+
+  // ensure at least one arrow already has a clear, unobstructed path off the board
+  function findClearCandidate(paths){
+    for(const p of paths){
+      const [r,c] = p.cells[p.cells.length-1];
+      if(edgeMatches(r,c,p.headDir)) return p.id;
+    }
+    for(let i=0;i<paths.length;i++){
+      const flipped = flipPath(paths[i]);
+      const [r,c] = flipped.cells[flipped.cells.length-1];
+      if(edgeMatches(r,c,flipped.headDir)){
+        paths[i] = flipped;
+        return flipped.id;
+      }
+    }
+    return null;
+  }
+
+function buildLayout(){
+
+    while(true){
+
+        const {grid, paths} = rawGenerate();
+
+        const clearId = findClearCandidate(paths);
+        if(clearId===null) continue;
+
+        const resolved = resolveConflicts(paths, clearId);
+        if(!resolved.ok) continue;
+
+        // simulate the whole puzzle
+        const simGrid = grid.map(r=>r.slice());
+        const remaining = new Map();
+
+        for(const p of resolved.paths)
+            remaining.set(p.id, structuredClone(p));
+
+        let removed = 0;
+
+        while(true){
+
+            let found = false;
+
+            for(const [id,p] of remaining){
+
+                const [r,c] = p.cells[p.cells.length-1];
+                const d = DIRS[p.headDir];
+
+                let rr=r+d.dy;
+                let cc=c+d.dx;
+
+                let clear=true;
+
+                while(rr>=0 && rr<ROWS && cc>=0 && cc<COLS){
+
+                    if(simGrid[rr][cc]!=-1){
+                        clear=false;
+                        break;
+                    }
+
+                    rr+=d.dy;
+                    cc+=d.dx;
+                }
+
+                if(clear){
+
+                    found=true;
+
+                    for(const [cr,cc] of p.cells)
+                        simGrid[cr][cc]=-1;
+
+                    remaining.delete(id);
+                    removed++;
+
+                    break;
+                }
+            }
+
+            if(!found) break;
+        }
+
+        // ALL arrows removable?
+        if(removed===resolved.paths.length){
+
+            return{
+                grid,
+                paths:resolved.paths,
+                clearId
+            };
+
+        }
+
+    }
+
+}
+
+  // ---- Runtime state ----
+    let grid;
+    let pathsMap;
+
+    let leaving = [];
+    let flashing = new Map();//red flashing arrows
+   let animFrameQueued = false;
+
+  const SPEED = 0.62;             // px per ms travelled along the path while exiting
+  const FLASH_DURATION = 380;     // ms
+  const RED = '#e0435a';
+
+  function cellCenter(r,c){
+    const TOP_BAR = cellSize * 0.9;
+
+    return [
+        c*cellSize + cellSize/2,
+        TOP_BAR + r*cellSize + cellSize/2
+    ];
+}
+
+  function drawDotGrid(){
+
+      ctx.fillStyle = "#e53935";
+      ctx.font = `bold ${cellSize*0.55}px Arial`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      let hearts = "";
+
+      for(let i=0;i<lives;i++)
+          hearts += "❤ ";
+
+    const rDot = Math.max(1, cellSize*0.045);
+
+    ctx.fillStyle = 'rgba(44,47,74,0.25)';
+    for(let r=0; r<=ROWS; r++){
+      for(let c=0; c<=COLS; c++){
+        ctx.beginPath();
+        const TOP_BAR = cellSize * 0.9;
+
+              ctx.arc(
+                  c*cellSize,
+                  TOP_BAR + r*cellSize,
+                  rDot,
+                  0,
+                  Math.PI*2
+              );
+        ctx.fill();
+      }
+    }
+  }
+
+  // cumulative arc-length along a path's cell centers, for continuous "slide along the path" motion
+  function buildArcLength(pts){
+    const cum = [0];
+    for(let i=1;i<pts.length;i++){
+      const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+      cum.push(cum[i-1] + Math.hypot(x1-x0, y1-y0));
+    }
+    return cum;
+  }
+
+  // position at arc-length s along the polyline; beyond the last point it keeps
+  // going straight in headDir, exactly like a snake that has left the pipe
+  function pointAtArclength(pts, cum, s, headVec){
+    const total = cum[cum.length-1];
+    if(s <= 0) return pts[0];
+    if(s > total){
+      const [hx,hy] = pts[pts.length-1];
+      const extra = s - total;
+      return [hx + headVec.dx*extra, hy + headVec.dy*extra];
+    }
+    for(let i=1;i<cum.length;i++){
+      if(s <= cum[i] || i === cum.length-1){
+        const segLen = (cum[i]-cum[i-1]) || 1e-6;
+        const t = (s - cum[i-1]) / segLen;
+        const [x0,y0] = pts[i-1], [x1,y1] = pts[i];
+        return [x0+(x1-x0)*t, y0+(y1-y0)*t];
+      }
+    }
+    return pts[pts.length-1];
+  }
+
+  function lerpColor(hexA, hexB, t){
+    const a = parseInt(hexA.slice(1),16), b = parseInt(hexB.slice(1),16);
+    const ar=(a>>16)&255, ag=(a>>8)&255, ab=a&255;
+    const br=(b>>16)&255, bg=(b>>8)&255, bb=b&255;
+    const r = Math.round(ar+(br-ar)*t), g = Math.round(ag+(bg-ag)*t), bl = Math.round(ab+(bb-ab)*t);
+    return '#' + ((1<<24)+(r<<16)+(g<<8)+bl).toString(16).slice(1);
+  }
+
+  // draws a pipe strip through an arbitrary list of points, with the arrowhead
+  // built from the direction of travel at the very front point
+  function drawStrip(pts, headVec, color){
+    const thickness = cellSize * 0.08;  // width of arrow
+
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = thickness;
+
+    ctx.beginPath();
+    pts.forEach(([x,y], i) => { if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    ctx.stroke();
+
+    const [ex,ey] = pts[pts.length-1];
+    const tipX = ex + headVec.dx*cellSize*0.22;
+    const tipY = ey + headVec.dy*cellSize*0.22;
+    ctx.beginPath();
+    ctx.moveTo(ex,ey);
+    ctx.lineTo(tipX,tipY);
+    ctx.stroke();
+
+    const headLen = cellSize*0.30;
+    const headW = cellSize*0.40;   // width reduced 50% from original 0.40
+    const angle = Math.atan2(headVec.dy, headVec.dx);
+    const baseX = tipX - Math.cos(angle)*headLen;
+    const baseY = tipY - Math.sin(angle)*headLen;
+    const perpX = -Math.sin(angle)*headW/2;
+    const perpY =  Math.cos(angle)*headW/2;
+
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX+perpX, baseY+perpY);
+    ctx.lineTo(baseX-perpX, baseY-perpY);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function drawPathShape(path, color){
+    const pts = path.cells.map(([r,c]) => cellCenter(r,c));
+    drawStrip(pts, DIRS[path.headDir], color || PIPE_COLOR);
+  }
+
+  function easeInCubic(t){ return t*t*t; }
+
+  // true if nothing else currently occupies the cells straight ahead of this
+  // arrow's head, all the way to the edge of the board
+  function isClear(path){
+    const [r,c] = path.cells[path.cells.length-1];
+    const d = DIRS[path.headDir];
+    let rr = r+d.dy, cc = c+d.dx;
+    while(rr>=0 && rr<ROWS && cc>=0 && cc<COLS){
+      const occ = grid[rr][cc];
+      if(occ !== -1 && occ !== path.id) return false;
+      rr += d.dy; cc += d.dx;
+    }
+    return true;
+  }
+
+  function draw(now){
+    ctx.clearRect(0,0,boardW,boardH);
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--board-bg').trim();
+    ctx.fillRect(0,0,boardW,boardH);
+    drawDotGrid();
+
+    pathsMap.forEach(p => {
+      let color = PIPE_COLOR;
+      const flash = flashing.get(p.id);
+      if(flash !== undefined){
+        const t = (now - flash) / FLASH_DURATION;
+        if(t >= 1){
+          flashing.delete(p.id);
+        } else {
+          color = lerpColor(RED, PIPE_COLOR, Math.min(1,t));
+        }
+      }
+      drawPathShape(p, color);
+    });
+
+    leaving = leaving.filter(item => {
+      const elapsed = now - item.startTime;
+      const t = Math.min(1, elapsed / item.duration);
+      const shift = item.total_extra_travel * easeInCubic(t);
+      const headVec = DIRS[item.path.headDir];
+      const newPts = item.cum.map(s => pointAtArclength(item.pts, item.cum, s + shift, headVec));
+      drawStrip(newPts, headVec, PIPE_COLOR);
+      return t < 1;
+    });
+
+    if(leaving.length > 0 || flashing.size > 0){
+      requestAnimationFrame(draw);
+    } else {
+      animFrameQueued = false;
+    }
+  }
+
+  function requestDraw(){
+    if(!animFrameQueued){
+      animFrameQueued = true;
+      requestAnimationFrame(draw);
+    }
+  }
+
+  function showPopup(title, message, callback){
+
+    const old = document.getElementById("gamePopup");
+    if(old) old.remove();
+
+    const popup = document.createElement("div");
+
+    popup.id = "gamePopup";
+
+    popup.style.cssText = `
+        position:fixed;
+        inset:0;
+        background:rgba(0,0,0,.45);
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        z-index:9999;
+        cursor:pointer;
+    `;
+
+    popup.innerHTML = `
+        <div style="
+            background:white;
+            border-radius:18px;
+            padding:28px 36px;
+            text-align:center;
+            box-shadow:0 15px 40px rgba(0,0,0,.25);
+            min-width:260px;
+        ">
+            <div style="
+                font-size:30px;
+                font-weight:bold;
+                color:#2c2f4a;
+                margin-bottom:14px;
+            ">
+                ${title}
+            </div>
+
+            <div style="
+                font-size:17px;
+                color:#666;
+            ">
+                ${message}
+            </div>
+        </div>
+    `;
+
+    popup.addEventListener("click",()=>{
+
+        popup.remove();
+
+        if(callback)
+            callback();
+
+    });
+
+    document.body.appendChild(popup);
+
+}
+
+    function checkLevelComplete(){
+
+        if(pathsMap.size > 0) return;
+
+        const wait = () => {
+
+            if(leaving.length > 0){
+
+                requestAnimationFrame(wait);
+                return;
+
+            }
+
+            showPopup(
+                "Level Pass",
+                "Touch anywhere to start next level",
+                () => location.reload()
+            );
+
+        };
+
+        requestAnimationFrame(wait);
+
+    }
+  // tapping an arrow: if the way ahead is clear it slides out head-first, tail
+  // following the same bent path (like a snake); if blocked it flashes red and stays put
+  function handleTap(clientX, clientY){
+
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const TOP_BAR = cellSize * 0.9;
+
+        const col = Math.floor(x / cellSize);
+        const row = Math.floor((y - TOP_BAR) / cellSize);
+
+        if (
+            row < 0 ||
+            row >= ROWS ||
+            col < 0 ||
+            col >= COLS
+        ) return;
+
+    const id = grid[row][col];
+    if(id === -1 || id == null) return;
+    const path = pathsMap.get(id);
+    if(!path) return;
+
+    if(!isClear(path)){
+
+    lives--;
+  updateLives();
+    flashing.set(id, performance.now());
+
+    if(lives <= 0){
+
+        requestDraw();
+
+        setTimeout(()=>{
+
+            showPopup(
+              "Game Over",
+              "Touch anywhere to start new game",
+              ()=>location.reload()
+          );
+
+        },400);
+
+        return;
+    }
+
+    requestDraw();
+
+        if(pathsMap.size===0){
+
+        setTimeout(()=>{
+
+            showPopup(
+                "Level Pass",
+                "Touch anywhere to start next level",
+                ()=>location.reload()
+            );
+
+        },500);
+
+    }
+
+    return;
+}
+
+    pathsMap.delete(id);
+    for(const [r,c] of path.cells) grid[r][c] = -1;
+
+    const pts = path.cells.map(([r,c]) => cellCenter(r,c));
+    const cum = buildArcLength(pts);
+    const total = cum[cum.length-1];
+    const margin = (COLS+ROWS) * cellSize;                 // guarantees it clears the board
+    const total_extra_travel = total + margin;
+    const duration = Math.max(220, total_extra_travel / SPEED);
+
+    leaving.push({
+      id,
+      path,
+      pts,
+      cum,
+      total_extra_travel,
+      duration,
+      startTime: performance.now()
+  });
+
+  requestDraw();
+
+  checkLevelComplete();
+
+          // Level complete
+      if (pathsMap.size === 0) {
+
+          setTimeout(() => {
+
+              showPopup(
+                  "Level Pass",
+                  "Touch anywhere to start next level",
+                  () => location.reload()
+              );
+
+          }, duration);
+
+      }
+  }
+
+  canvas.addEventListener('click', (e) => handleTap(e.clientX, e.clientY));
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if(t) handleTap(t.clientX, t.clientY);
+  }, {passive:false});
+
+  function layoutCanvas(){
+    const dpr = window.devicePixelRatio || 1;
+    const availW = Math.min(window.innerWidth * 0.80, 480);
+    const availH = window.innerHeight * 0.80;
+    cellSize = Math.floor(Math.min(availW/COLS, availH/ROWS));
+    boardW = cellSize*COLS;
+    const TOP_BAR = cellSize * 0.9;
+
+    boardH = cellSize * ROWS + TOP_BAR;
+
+    canvas.style.width = boardW+'px';
+    canvas.style.height = boardH+'px';
+    canvas.width = boardW*dpr;
+    canvas.height = boardH*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+
+    draw(performance.now());
+  }
+
+        window.addEventListener('resize', layoutCanvas);
+        layoutCanvas();
+
+      if (!gameStarted) {
+          showMenu();
+      }  
+
+})();
+</script>
+
+
+
+
+</body>
+</html>
