@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+ <!-- Game icon -->
+    <link rel="icon" type="image/png" href="icon.png">
 <title>Arrow</title>
 <style>
-
-  /* ===========================
+/* ===========================
    MAIN MENU
 =========================== */
-
 #menuScreen{
     position:fixed;
     inset:0;
@@ -33,7 +33,6 @@
     letter-spacing:5px;
 }
 .menu-box button{
-
     background:none;
     border:none;
 
@@ -72,9 +71,11 @@
     touch-action: none;
   }
   #wrap{
-    width:100%; height:100%;
+    width:100%; min-height:100%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     gap:14px;
+    overflow-y:auto;
+    padding:10px 0;
   }
   #title{
     color:#2c2f4a;
@@ -83,6 +84,12 @@
     font-size: 26px;
     user-select:none;
   }
+#boardViewport{
+    position:relative;
+    overflow:hidden;
+    border-radius:18px;
+    touch-action:none;
+}
 #boardFrame{
     position:relative;
     padding:10px;
@@ -91,18 +98,94 @@
     box-shadow:
         0 0 0 1px rgba(0,0,0,.03) inset,
         0 16px 36px rgba(30,25,60,.18);
+    transform-origin: 0 0;
+    transition: transform .12s ease-out;
+    will-change: transform;
+}
+#boardFrame.no-transition{
+    transition: none;
 }
   #board{
     display:block;
     border-radius: 10px;
   }
+.zoomControls{
+    display:flex;
+    flex-direction:row;
+    justify-content:center;
+    align-items:center;
+    gap:8px;
+    z-index:50;
+}
+.zoomBtn{
+    width:24px;
+    height:24px;
+    border:none;
+    border-radius:7px;
+    background:#2c2f4a;
+    color:#fff;
+    font-size:13px;
+    font-weight:bold;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    box-shadow:0 2px 8px rgba(0,0,0,.25);
+    opacity:.88;
+    user-select:none;
+    transition:.15s;
+}
+.zoomBtn:active{
+    transform:scale(.92);
+}
+#zoomResetBtn{
+    width:auto;
+    padding:0 8px;
+    font-size:9px;
+    letter-spacing:.3px;
+}
+#topBar{
+    width:fit-content;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    position:relative;
+    margin:0 auto 12px;
+}
+
+#lives{
+
+    color:#e53935;
+
+    font-size:28px;
+
+    font-weight:bold;
+
+    letter-spacing:4px;
+
+}
+
+#levelLabel{
+    position:absolute;
+    left:10px;
+    top:50%;
+    transform:translateY(-50%);
+
+    color:#2c2f4a;
+    font-size:13px;
+    font-weight:800;
+    letter-spacing:1px;
+    white-space:nowrap;
+}
+
 #menuBtn{
     position:absolute;
-    top:10px;
+    top:50%;
     right:10px;
+    transform:translateY(-50%);
 
-    width:25px;
-    height:25px;
+    width:30px;
+    height:30px;
 
     border:none;
     border-radius:8px;
@@ -126,83 +209,32 @@
     transition:.15s;
 }
 #menuBtn:hover{
-    transform:scale(1.05);
+    transform:translateY(-50%) scale(1.05);
 }
 #menuBtn:active{
-    transform:scale(.95);
-}
-#menuBtn:hover{
-    transform:scale(1.05);
-}
-#menuBtn:active{
-    transform:scale(.95);
-}
-#topBar{
-
-    width:100%;
-
-    max-width:520px;
-
-    display:flex;
-
-    justify-content:center;
-
-    align-items:center;
-
-    position:relative;
-
-    margin-bottom:12px;
-
-}
-
-#lives{
-
-    color:#e53935;
-
-    font-size:28px;
-
-    font-weight:bold;
-
-    letter-spacing:4px;
-
-}
-
-#menuBtn{
-
-    position:fixed;
-
-    right:100;
-
-    width:38px;
-
-    height:38px;
-
-    border:none;
-
-    border-radius:10px;
-
-    background:#2c2f4a;
-
-    color:white;
-
-    font-size:20px;
-
-    cursor:pointer;
-
+    transform:translateY(-50%) scale(.95);
 }
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="topBar">
+    <div id="levelLabel">LEVEL 1</div>
     <div id="lives">
         ❤ ❤ ❤
     </div>
     <button id="menuBtn">☰</button>
 </div>
-  <div id="boardFrame">
+  <div id="boardViewport">
+    <div id="boardFrame">
           <canvas id="board"></canvas>
-</div>
+    </div>
+  </div>
+  <div class="zoomControls">
+    <button id="zoomInBtn" class="zoomBtn" title="Zoom in">+</button>
+    <button id="zoomOutBtn" class="zoomBtn" title="Zoom out">−</button>
+    <button id="zoomResetBtn" class="zoomBtn" title="Reset zoom">100%</button>
+  </div>
 
   </div>
 </div>
@@ -211,6 +243,7 @@
     <div class="menu-box">
 
         <h1>ARROW PUZZLE</h1>
+
         <button id="resumeBtn">▶ Resume</button>
 
         <button id="newBtn">🆕 New Game</button>
@@ -225,18 +258,117 @@
      </div>
 </div>
 
+
 <script>
 (function(){
   const canvas = document.getElementById('board');
   const ctx = canvas.getContext('2d');
+  const boardViewport = document.getElementById('boardViewport');
+  const boardFrame = document.getElementById('boardFrame');
 
-  // ---- Config (tweak freely later) ----
-  const COLS = 10;
-  const ROWS = 15;
+      // ---- Config (tweak freely later) ----
+    let COLS = 10;
+    let ROWS = 15;
+    let gameMode = "medium";
+    const MODES = {
+        easy: {
+            rows: 8,
+            cols: 6
+        },
+        medium: {
+            rows: 12,
+            cols: 8
+        },
+        hard: {
+            rows: 18,
+            cols: 12
+        }
+    };
   const PIPE_COLOR = '#2c2f4a';
-  const MAX_STEPS = 13;          // hard cap on how many cells one path can cover
+  let MAX_STEPS = 13;            // hard cap on how many cells one path can cover (scales with level)
+  let MIN_ARROW_LENGTH = 15;      // min cells per path (scales with level)
   let lives = 3;
   let gameStarted = false;
+  let progressMade = false; // true once at least one arrow has actually been cleared this level
+  let currentLevel = 1;
+  // Tracks whether we've pushed an extra 'game' entry onto the browser history
+  // stack on top of the base 'menu' entry, so the device/browser back button
+  // returns to the menu instead of exiting the page while playing.
+  let inGameHistoryState = false;
+  // Zoom/pan state for the board (lets players zoom in to see crowded
+  // arrows clearly and avoid mis-tapping the wrong pipe).
+  let boardZoom = 1, boardPanX = 0, boardPanY = 0;
+  const MIN_ZOOM = 1, MAX_ZOOM = 2.6;
+  let maxUnlockedLevel = { easy: 1, medium: 1, hard: 1 };
+
+  // ---- persistence ----
+  const PROGRESS_KEY = 'arrowPuzzleProgress';
+  const SAVE_KEY = 'arrowPuzzleSave';
+
+  function loadProgress(){
+    try{
+      const raw = localStorage.getItem(PROGRESS_KEY);
+      if(raw){
+        const data = JSON.parse(raw);
+        const saved = data.maxUnlockedLevel;
+        if(saved && typeof saved === 'object'){
+          // current per-mode format
+          maxUnlockedLevel = {
+            easy: saved.easy || 1,
+            medium: saved.medium || 1,
+            hard: saved.hard || 1
+          };
+        } else if(typeof saved === 'number'){
+          // migrate old single shared-number saves: apply it to every mode
+          // so nobody's existing progress just vanishes
+          maxUnlockedLevel = { easy: saved, medium: saved, hard: saved };
+        }
+      }
+    }catch(e){}
+  }
+
+  function saveProgress(){
+    try{
+      localStorage.setItem(PROGRESS_KEY, JSON.stringify({maxUnlockedLevel}));
+    }catch(e){}
+  }
+
+  function saveGameState(){
+    try{
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        mode: gameMode,
+        level: currentLevel,
+        lives,
+        rows: ROWS,
+        cols: COLS,
+        grid,
+        paths: Array.from(pathsMap.values()),
+        progressMade
+      }));
+    }catch(e){}
+  }
+
+  function loadGameState(){
+    try{
+      const raw = localStorage.getItem(SAVE_KEY);
+      if(!raw) return false;
+      const data = JSON.parse(raw);
+      if(!data || !data.grid || !data.paths) return false;
+      gameMode = data.mode || gameMode;
+      currentLevel = data.level || 1;
+      lives = data.lives || 3;
+      ROWS = data.rows;
+      COLS = data.cols;
+      grid = data.grid;
+      pathsMap = new Map(data.paths.map(p => [p.id, p]));
+      progressMade = !!data.progressMade;
+      return true;
+    }catch(e){ return false; }
+  }
+
+  function clearGameState(){
+    try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
+  }
 
   const DIRS = {
     right: {dx:1, dy:0},
@@ -247,12 +379,90 @@
   const DIR_NAMES = Object.keys(DIRS);
   const OPPOSITE = {right:'left', left:'right', up:'down', down:'up'};
 
+  // ---- Deterministic per-level randomness ----
+  // Every level (identified by mode+level number) must always generate the
+  // exact same board, every single time it's played - whether that's
+  // replaying it back-to-back or coming back to it after 10 other levels.
+  // So instead of the raw Math.random(), all generation code below draws
+  // from `rng()`, a seeded PRNG that gets reseeded from (mode, level)
+  // right before a layout is built. Same seed in -> same board out, always.
+
+  // simple string hash -> 32-bit seed (cyrb53-lite)
+  function hashSeed(str){
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for(let i=0;i<str.length;i++){
+      const ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
+    return (h1 >>> 0);
+  }
+
+  // mulberry32: small, fast, deterministic PRNG
+  function mulberry32(seed){
+    let a = seed >>> 0;
+    return function(){
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  let rng = Math.random; // replaced by seedLevelRng() before every generation
+
+  function seedLevelRng(mode, level){
+    rng = mulberry32(hashSeed(mode + ':' + level));
+  }
+
+    // ---- Level difficulty scaling ----
+    function getLevelConfig(mode, level){
+      const base = MODES[mode];
+      const growth = Math.min(Math.floor((level - 1) / 4), 4);
+      const maxSteps = Math.min(12, 7 + Math.floor((level - 1) / 4));
+      // minArrowLength must stay comfortably below maxSteps, or the
+      // generator can never produce a path that satisfies it (which was
+      // forcing boards — especially large ones like Hard — to fall back
+      // to plain single-direction straight lines).
+      const minArrowLength = Math.max(4, Math.min(maxSteps - 2, Math.floor(rng() * 3) + 7));
+      return {
+        rows: base.rows + growth,
+        cols: base.cols + Math.floor(growth * 0.5),
+        minArrowLength,
+        maxSteps
+      };
+    }
+
+    function applyLevelConfig(){
+      seedLevelRng(gameMode, currentLevel);
+      const cfg = getLevelConfig(gameMode, currentLevel);
+      ROWS = cfg.rows;
+      COLS = cfg.cols;
+      MIN_ARROW_LENGTH = cfg.minArrowLength;
+      MAX_STEPS = cfg.maxSteps;
+    }
+
+    function setMode(mode){
+      gameMode = mode;
+      applyLevelConfig();
+  }
+
+
+         function updateMenuStatus(){
+            const modeLabel = gameMode.charAt(0).toUpperCase() + gameMode.slice(1);
+            document.getElementById("levelBtn").textContent = "🏆 Level : " + currentLevel;
+            document.getElementById("modeBtn").textContent = "🎮 Mode : " + modeLabel;
+      }
+
          function showMenu(){
 
             document.getElementById("menuScreen").style.display = "flex";
 
             document.getElementById("resumeBtn").style.display =
-                gameStarted ? "block" : "none";
+                (gameStarted && progressMade) ? "block" : "none";
+
+            updateMenuStatus();
 
       }
 
@@ -260,67 +470,252 @@
 
             document.getElementById("menuScreen").style.display="none";
 
+            // Give the device/browser back button something to return from:
+            // pressing back while playing should reopen the menu, not exit
+            // the page. Only push once per "session" of play so repeated
+            // pause/resume cycles don't stack up multiple history entries.
+            if(!inGameHistoryState){
+                history.pushState({screen:"game"}, "");
+                inGameHistoryState = true;
+            }
+
+        }
+
+        // Same as hideMenu(), but used when we're already reacting to a
+        // history navigation (e.g. a 'forward' button restoring the 'game'
+        // state) - so it must NOT push another history entry itself.
+        function hideMenuWithoutHistoryPush(){
+            document.getElementById("menuScreen").style.display="none";
         }
 
         document.getElementById("resumeBtn").onclick=()=>{
 
       hideMenu();
 
-      requestDraw();
+      layoutCanvas();
 
         };
-document.getElementById("newBtn").onclick = startNewGame;
 
        function startNewGame() {
 
+              applyLevelConfig();
               lives = 3;
               updateLives();
+              updateLevelLabel();
               leaving = [];
               flashing = new Map();
+              progressMade = false;
               const layout = buildLayout();
               grid = layout.grid;
               pathsMap = new Map(
                   layout.paths.map(p => [p.id, p])
               );
-              draw(performance.now());
+              resetZoomPan();
+              layoutCanvas();
+              saveGameState();
               hideMenu();
           }
-                    
+
         document.getElementById("newBtn").onclick = () => {
 
+              currentLevel = maxUnlockedLevel[gameMode];
               gameStarted = true;
-
-                startNewGame();
-
-
+              startNewGame();
           };
         function updateLives(){
            document.getElementById("lives").textContent =
              "❤ ".repeat(lives).trim();
         }
 
-        document.getElementById("levelBtn").onclick=()=>{
+        function updateLevelLabel(){
+            document.getElementById("levelLabel").textContent = "LEVEL " + currentLevel;
+        }
 
-            alert("Coming Soon");
+        document.getElementById("levelBtn").onclick = () => {
 
+            const old = document.getElementById("levelPopup");
+            if(old) old.remove();
+
+            const popup = document.createElement("div");
+            popup.id = "levelPopup";
+
+            popup.style.cssText = `
+                position:fixed;
+                inset:0;
+                background:rgba(0,0,0,.45);
+                display:flex;
+                justify-content:center;
+                align-items:center;
+                z-index:99999;
+            `;
+
+            let buttonsHtml = '';
+            for(let lvl = 1; lvl <= maxUnlockedLevel[gameMode]; lvl++){
+                buttonsHtml += `<button class="levelSelect" data-level="${lvl}">${lvl}</button>`;
+            }
+
+            popup.innerHTML = `
+                <div style="
+                    background:white;
+                    padding:15px;
+                    border-radius:18px;
+                    width:220px;
+                    max-height:70vh;
+                    overflow-y:auto;
+                    text-align:center;
+                    box-shadow:0 15px 40px rgba(0,0,0,.25);
+                ">
+                    <div style="
+                        font-size:15px;
+                        font-weight:bold;
+                        color:#2c2f4a;
+                        margin-bottom:12px;
+                    ">
+                        Select Level (${gameMode.charAt(0).toUpperCase() + gameMode.slice(1)})
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+                        ${buttonsHtml}
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(popup);
+            popup.querySelectorAll(".levelSelect").forEach(btn=>{
+                btn.style.cssText = `
+                    padding:10px 0;
+                    font-size:13px;
+                    font-weight:bold;
+                    border:none;
+                    border-radius:10px;
+                    background:#2c2f4a;
+                    color:white;
+                    cursor:pointer;
+                `;
+                btn.onclick = () => {
+                    currentLevel = parseInt(btn.dataset.level, 10);
+                    gameStarted = true;
+                    startNewGame();
+                    popup.remove();
+                };
+            });
+            popup.onclick = (e) => {
+                if(e.target === popup) popup.remove();
+            };
         };
 
-        document.getElementById("modeBtn").onclick=()=>{
+       document.getElementById("modeBtn").onclick = () => {
 
-            alert("Coming Soon");
+        const old = document.getElementById("modePopup");
+        if(old) old.remove();
 
+        const popup = document.createElement("div");
+        popup.id = "modePopup";
+
+    popup.style.cssText = `
+        position:fixed;
+        inset:0;
+        background:rgba(0,0,0,.45);
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        z-index:99999;
+    `;
+
+    popup.innerHTML = `
+        <div style="
+            background:white;
+            padding:15px;
+            border-radius:18px;
+            width:150px;
+            text-align:center;
+            box-shadow:0 15px 40px rgba(0,0,0,.25);
+        ">
+
+            <div style="
+                font-size:15px;
+                font-weight:bold;
+                color:#2c2f4a;
+                margin-bottom:12px;
+            ">
+                Select Mode
+            </div>
+
+            <button class="modeSelect" data-mode="easy">Easy</button>
+            <button class="modeSelect" data-mode="medium">Medium</button>
+            <button class="modeSelect" data-mode="hard">Hard</button>
+
+        </div>
+    `;
+
+    document.body.appendChild(popup);
+    popup.querySelectorAll(".modeSelect").forEach(btn=>{
+        btn.style.cssText=`
+            width:100%;
+            padding:10px;
+            font-size:10px;
+            margin:5px 0;
+            font-weight:bold;
+            border:none;
+            border-radius:12px;
+            background:#2c2f4a;
+            color:white;
+            cursor:pointer;
+        `;
+        btn.onclick=()=>{
+           setMode(btn.dataset.mode);
+            currentLevel = maxUnlockedLevel[btn.dataset.mode];
+            updateMenuStatus();
+            popup.remove();
         };
+    });
+    popup.onclick=(e)=>{
+        if(e.target===popup)
+            popup.remove();
+    };
+};
 
         document.getElementById("muteBtn").onclick=()=>{
-
             alert("Coming Soon");
-
         };
+        document.getElementById("exitBtn").onclick = () => {
+            const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-        document.getElementById("exitBtn").onclick=()=>{
+            // Desktop browsers: do nothing.
+            if (!isMobile) {
+                console.log("Exit is available only on mobile.");
+                return;
+            }
 
-            alert("Exit");
+            // Cordova / PhoneGap wrapped app.
+            if (window.cordova && navigator.app) {
+                navigator.app.exitApp();
+                return;
+            }
 
+            // Capacitor wrapped app.
+            if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+                window.Capacitor.Plugins.App.exitApp();
+                return;
+            }
+
+            // Custom Android WebView JS bridge, e.g.
+            // webView.addJavascriptInterface(new Object(){ @JavascriptInterface public void exitApp(){...} }, "AndroidApp");
+            if (window.AndroidApp && typeof window.AndroidApp.exitApp === 'function') {
+                window.AndroidApp.exitApp();
+                return;
+            }
+
+            // Custom iOS WKWebView message handler, e.g.
+            // window.webkit.messageHandlers.exitApp.postMessage(null)
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.exitApp) {
+                window.webkit.messageHandlers.exitApp.postMessage(null);
+                return;
+            }
+
+            // Plain mobile browser fallback: only works if this tab/window
+            // was opened via script (window.open); most browsers block
+            // scripts from closing a tab the user opened directly.
+            window.close();
         };
         document.getElementById("menuBtn").onclick = () => {
 
@@ -330,7 +725,7 @@ document.getElementById("newBtn").onclick = startNewGame;
 
   function shuffle(arr){
     for(let i=arr.length-1;i>0;i--){
-      const j = Math.floor(Math.random()*(i+1));
+      const j = Math.floor(rng()*(i+1));
       [arr[i],arr[j]]=[arr[j],arr[i]];
     }
     return arr;
@@ -367,35 +762,70 @@ document.getElementById("newBtn").onclick = startNewGame;
     return false;
   }
 
-  // RULE: an arrow's head may never touch its own body/tail - a path may never
-  // become edge-adjacent to another cell of itself, except its immediate chain neighbour
-  function wouldTouchSelf(grid, pathId, nr, nc, r, c){
-    for(const name of DIR_NAMES){
-      const d = DIRS[name];
-      const ar = nr+d.dy, ac = nc+d.dx;
-      if(ar===r && ac===c) continue; // the connecting cell we just came from - always fine
-      if(ar<0||ar>=ROWS||ac<0||ac>=COLS) continue;
-      if(grid[ar][ac] === pathId) return true;
-    }
-    return false;
-  }
-
   // ---- raw generation: partition the grid into bent, non-overlapping pipe paths ----
+  // Cells are started in order of "most constrained first" (fewest free
+  // neighbors) rather than pure random order. This means tight corners get
+  // absorbed into a real, visible path while there's still room to grow,
+  // instead of being left over at the end as tiny near-invisible 1-cell stubs.
+  //
+  // SOLVABILITY IS BUILT IN, NOT CHECKED AFTERWARDS:
+  // a path's own body never blocks its own exit (see hasClearExit, which
+  // ignores the path's own cells), so whether a given end of a path has a
+  // clear line off the board depends ONLY on paths already committed to the
+  // grid before it - never on anything placed later. So as each new path is
+  // grown, we require that at least one of its two ends (head or tail)
+  // already has a clear exit through everything placed so far, and commit
+  // it using that end as the head. That guarantees the whole board is fully
+  // clearable, in the reverse of build order, no matter what gets placed
+  // around it afterwards - by construction, not by luck. On large/tight
+  // boards (e.g. late Hard levels) this is what keeps generation from
+  // repeatedly failing and dropping to the plain straight-line fallback.
   function rawGenerate(){
     const grid = Array.from({length: ROWS}, () => Array(COLS).fill(-1));
     const paths = [];
 
-    let cellOrder = [];
-    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) cellOrder.push([r,c]);
-    shuffle(cellOrder);
+    function freeNeighborCount(r,c){
+      let cnt = 0;
+      for(const name of DIR_NAMES){
+        const d = DIRS[name];
+        const nr = r+d.dy, nc = c+d.dx;
+        if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+        if(grid[nr][nc] === -1) cnt++;
+      }
+      return cnt;
+    }
 
-    for(const [sr,sc] of cellOrder){
-      if(grid[sr][sc] !== -1) continue;
+    function pickStartCell(){
+      let bestCount = Infinity, bestCandidates = [];
+      for(let r=0;r<ROWS;r++){
+        for(let c=0;c<COLS;c++){
+          if(grid[r][c] !== -1) continue;
+          const cnt = freeNeighborCount(r,c);
+          if(cnt < bestCount){ bestCount = cnt; bestCandidates = [[r,c]]; }
+          else if(cnt === bestCount){ bestCandidates.push([r,c]); }
+        }
+      }
+      if(bestCandidates.length === 0) return null;
+      return bestCandidates[Math.floor(rng()*bestCandidates.length)];
+    }
 
-      const pathId = paths.length;
+    // grow one candidate shape from (sr,sc) without touching the shared grid,
+    // so a shape that doesn't pan out can be thrown away and retried with no
+    // cleanup - only cells vs already-FINISHED paths are checked against grid.
+    function growCandidate(sr, sc){
       const cells = [[sr,sc]];
-      grid[sr][sc] = pathId;
+      const occupied = new Set([sr+','+sc]);
       let lastDir = null;
+
+      function touchesSelf(nr, nc, r, c){
+        for(const name of DIR_NAMES){
+          const d = DIRS[name];
+          const ar = nr+d.dy, ac = nc+d.dx;
+          if(ar===r && ac===c) continue; // the connecting cell we just came from - always fine
+          if(occupied.has(ar+','+ac)) return true;
+        }
+        return false;
+      }
 
       while(cells.length < MAX_STEPS){
         const [r,c] = cells[cells.length-1];
@@ -405,41 +835,193 @@ document.getElementById("newBtn").onclick = startNewGame;
           const d = DIRS[name];
           const nr = r+d.dy, nc = c+d.dx;
           if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
-          if(grid[nr][nc] !== -1) continue;
+          if(grid[nr][nc] !== -1) continue;               // occupied by an earlier, finished path
+          if(occupied.has(nr+','+nc)) continue;            // occupied by this same path
           if(lastDir && name === OPPOSITE[lastDir]) continue; // never backtrack
-          if(wouldTouchSelf(grid, pathId, nr, nc, r, c)) continue; // head/body must never touch itself
+          if(touchesSelf(nr, nc, r, c)) continue;          // head/body must never touch itself
           let w = 3;                    // favour turning over continuing straight
           if(lastDir === name) w = 1;
           candidates.push({name, d, nr, nc, w});
         }
         if(candidates.length === 0) break;
+          // ---------- Minimum arrow length ----------
+          // MIN_ARROW_LENGTH scales with level (see getLevelConfig / applyLevelConfig)
 
-        // minimum arrow length = 3 cells
-         // Minimum arrow length = 3 points (3 cells)
-          // The generator is not allowed to stop until the arrow has at least 3 cells.
-          if (cells.length > 3) {
+          // Don't allow the generator to stop until the minimum length is reached.
+          if (cells.length >= MIN_ARROW_LENGTH) {
 
-              const stopChance = 0.10 + (cells.length - 3) * 0.045;
+              const stopChance = 0.10 + (cells.length - MIN_ARROW_LENGTH) * 0.045;
 
-              if (Math.random() < stopChance)
+              if (rng() < stopChance)
                   break;
           }
 
         const totalW = candidates.reduce((s,x)=>s+x.w,0);
-        let r2 = Math.random()*totalW;
+        let r2 = rng()*totalW;
         let pick = candidates[0];
         for(const cand of candidates){ if(r2 < cand.w){ pick = cand; break; } r2 -= cand.w; }
 
         cells.push([pick.nr, pick.nc]);
-        grid[pick.nr][pick.nc] = pathId;
+        occupied.add(pick.nr+','+pick.nc);
         lastDir = pick.name;
       }
 
-      const headDir = lastDir || DIR_NAMES[Math.floor(Math.random()*DIR_NAMES.length)];
-      paths.push({id: pathId, cells, headDir});
+      return {cells, lastDir};
+    }
+
+    // true if a straight line off the board from this end is clear of every
+    // path already committed to the grid (a path's own cells never count)
+    function hasClearExit(cells, dir){
+      const [r,c] = cells[cells.length-1];
+      const d = DIRS[dir];
+      let rr=r+d.dy, cc=c+d.dx;
+      while(rr>=0 && rr<ROWS && cc>=0 && cc<COLS){
+        if(grid[rr][cc] !== -1) return false;
+        rr+=d.dy; cc+=d.dx;
+      }
+      return true;
+    }
+
+    let start;
+    while((start = pickStartCell())){
+      const [sr,sc] = start;
+      let best = null;
+
+      for(let attempt=0; attempt<40 && !best; attempt++){
+        const {cells, lastDir} = growCandidate(sr, sc);
+
+        if(cells.length >= 2){
+          const [r0,c0] = cells[cells.length-2];
+          const [r1,c1] = cells[cells.length-1];
+          const tailEndDir = lastDir || directionBetween(r0,c0,r1,c1);
+          if(tailEndDir && hasClearExit(cells, tailEndDir)){
+            best = {cells, headDir: tailEndDir};
+            break;
+          }
+          const flippedCells = cells.slice().reverse();
+          const [fr0,fc0] = flippedCells[flippedCells.length-2];
+          const [fr1,fc1] = flippedCells[flippedCells.length-1];
+          const headEndDir = directionBetween(fr0,fc0,fr1,fc1);
+          if(headEndDir && hasClearExit(flippedCells, headEndDir)){
+            best = {cells: flippedCells, headDir: headEndDir};
+            break;
+          }
+        } else {
+          // single-cell stub: any of the 4 directions can serve as its head
+          for(const name of shuffle(DIR_NAMES.slice())){
+            if(hasClearExit(cells, name)){
+              best = {cells, headDir: name};
+              break;
+            }
+          }
+        }
+      }
+
+      // extremely rare corner case: even after retries neither end is clear -
+      // keep the last grown shape as-is rather than looping forever here;
+      // mergeStubs / the outer solvability check will catch anything left over
+      if(!best){
+        const {cells, lastDir} = growCandidate(sr, sc);
+        best = {cells, headDir: lastDir || DIR_NAMES[Math.floor(rng()*DIR_NAMES.length)]};
+      }
+
+      const pathId = paths.length;
+      for(const [cr,cc] of best.cells) grid[cr][cc] = pathId;
+      paths.push({id: pathId, cells: best.cells, headDir: best.headDir});
     }
 
     return {grid, paths};
+  }
+
+  // a chain is valid if every step is a single orthogonal move, no cell repeats,
+  // and no cell is edge-adjacent to another cell of the chain except its immediate neighbour
+  function isValidChain(cells){
+    for(let i=1;i<cells.length;i++){
+      const [r0,c0] = cells[i-1], [r1,c1] = cells[i];
+      const dr = Math.abs(r1-r0), dc = Math.abs(c1-c0);
+      if(!((dr===1&&dc===0)||(dr===0&&dc===1))) return false;
+    }
+    const seen = new Set(cells.map(([r,c]) => r+','+c));
+    if(seen.size !== cells.length) return false;
+    for(let i=0;i<cells.length;i++){
+      const [r,c] = cells[i];
+      for(const name of DIR_NAMES){
+        const d = DIRS[name];
+        const ar = r+d.dy, ac = c+d.dx;
+        const idx = cells.findIndex(([rr,cc]) => rr===ar && cc===ac);
+        if(idx === -1) continue;
+        if(idx !== i-1 && idx !== i+1) return false;
+      }
+    }
+    return true;
+  }
+
+  // try to graft a too-short stub path onto an adjacent path's head or tail,
+  // so nearly every cell ends up part of a proper, clearly-visible arrow
+  function tryMergeStub(grid, byId, stub){
+    for(const attachEnd of [0, stub.cells.length-1]){
+      const [ar,ac] = stub.cells[attachEnd];
+      for(const name of DIR_NAMES){
+        const d = DIRS[name];
+        const nr = ar+d.dy, nc = ac+d.dx;
+        if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+        const neighborId = grid[nr][nc];
+        if(neighborId === -1 || neighborId === stub.id) continue;
+        const neighborPath = byId.get(neighborId);
+        if(!neighborPath) continue;
+
+        const tail = neighborPath.cells[0];
+        const head = neighborPath.cells[neighborPath.cells.length-1];
+
+        if(tail[0]===nr && tail[1]===nc){
+          // attach at the neighbour's tail — headDir is unaffected
+          const newCells = attachEnd === 0
+            ? stub.cells.slice().reverse().concat(neighborPath.cells)
+            : stub.cells.slice().concat(neighborPath.cells);
+          if(newCells.length > MAX_STEPS + 4) continue;
+          if(!isValidChain(newCells)) continue;
+
+          for(const [cr,cc] of stub.cells) grid[cr][cc] = neighborPath.id;
+          neighborPath.cells = newCells;
+          byId.delete(stub.id);
+          return true;
+
+        } else if(head[0]===nr && head[1]===nc){
+          // attach at the neighbour's head — recompute headDir
+          const extension = attachEnd === 0 ? stub.cells : stub.cells.slice().reverse();
+          const newCells = neighborPath.cells.concat(extension);
+          if(newCells.length > MAX_STEPS + 4) continue;
+          if(!isValidChain(newCells)) continue;
+
+          const [r0,c0] = newCells[newCells.length-2];
+          const [r1,c1] = newCells[newCells.length-1];
+          const newHeadDir = directionBetween(r0,c0,r1,c1);
+          if(!newHeadDir) continue;
+
+          for(const [cr,cc] of stub.cells) grid[cr][cc] = neighborPath.id;
+          neighborPath.cells = newCells;
+          neighborPath.headDir = newHeadDir;
+          byId.delete(stub.id);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // graft as many too-short stubs as possible onto neighbouring paths
+  function mergeStubs(grid, paths){
+    const byId = new Map(paths.map(p => [p.id, p]));
+    let changed = true, iter = 0;
+    while(changed && iter < 500){
+      changed = false; iter++;
+      const stubs = [...byId.values()].filter(p => p.cells.length < MIN_ARROW_LENGTH);
+      for(const stub of stubs){
+        if(!byId.has(stub.id)) continue;
+        if(tryMergeStub(grid, byId, stub)) changed = true;
+      }
+    }
+    return [...byId.values()];
   }
 
   // RULE: two arrows sharing a row/column can never point straight at one
@@ -521,11 +1103,51 @@ document.getElementById("newBtn").onclick = startNewGame;
     return null;
   }
 
+// guaranteed-instant, always-solvable layout used only as a last resort if
+// random generation can't find a valid board quickly (can happen on very
+// large, highly-constrained boards at high levels)
+function buildFallbackLayout(){
+    const grid = Array.from({length: ROWS}, () => Array(COLS).fill(-1));
+    const paths = [];
+    for(let r=0; r<ROWS; r++){
+        const cells = [];
+        // each row is only ever occupied by its own path, so nothing else
+        // can block it regardless of direction - alternate so the board
+        // doesn't degenerate into every single arrow pointing the same way
+        const headDir = (r % 2 === 0) ? 'right' : 'left';
+        if(headDir === 'right'){
+            for(let c=0; c<COLS; c++){ cells.push([r,c]); grid[r][c] = r; }
+        } else {
+            for(let c=COLS-1; c>=0; c--){ cells.push([r,c]); grid[r][c] = r; }
+        }
+        paths.push({id: r, cells, headDir});
+    }
+    return {grid, paths, clearId: 0};
+}
+
 function buildLayout(){
+
+    let attempts = 0;
+    const MAX_ATTEMPTS = 2000; // give the real generator much more room before giving up
 
     while(true){
 
-        const {grid, paths} = rawGenerate();
+        attempts++;
+
+        if(attempts > MAX_ATTEMPTS){
+            return buildFallbackLayout();
+        }
+
+        const {grid, paths: rawPaths} = rawGenerate();
+        const paths = mergeStubs(grid, rawPaths);
+
+        // as a light safety net, avoid layouts that still have near-invisible
+        // stub arrows if we can help it — but don't loop forever over rare,
+        // highly-constrained boards.
+        if(attempts < 25){
+            const hasStub = paths.some(p => p.cells.length < MIN_ARROW_LENGTH);
+            if(hasStub) continue;
+        }
 
         const clearId = findClearCandidate(paths);
         if(clearId===null) continue;
@@ -600,8 +1222,9 @@ function buildLayout(){
 }
 
   // ---- Runtime state ----
-    let grid;
-    let pathsMap;
+    let grid = [];
+    let pathsMap = new Map();
+    let cellSize = 0, boardW = 0, boardH = 0;
 
     let leaving = [];
     let flashing = new Map();//red flashing arrows
@@ -871,7 +1494,16 @@ function buildLayout(){
             showPopup(
                 "Level Pass",
                 "Touch anywhere to start next level",
-                () => location.reload()
+                () => {
+                          currentLevel++;
+                          if(currentLevel > maxUnlockedLevel[gameMode]){
+                              maxUnlockedLevel[gameMode] = currentLevel;
+                              saveProgress();
+                          }
+                          gameStarted = true;
+                          clearGameState();
+                          startNewGame();
+                      }
             );
 
         };
@@ -884,8 +1516,11 @@ function buildLayout(){
   function handleTap(clientX, clientY){
 
     const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    // rect reflects the current CSS zoom transform (its width/height are
+    // boardW/boardH scaled by boardZoom), so convert back to the canvas's
+    // own unscaled coordinate space before dividing by cellSize.
+    const x = (clientX - rect.left) * (boardW / rect.width);
+    const y = (clientY - rect.top) * (boardH / rect.height);
     const TOP_BAR = cellSize * 0.9;
 
         const col = Math.floor(x / cellSize);
@@ -912,13 +1547,17 @@ function buildLayout(){
     if(lives <= 0){
 
         requestDraw();
+        clearGameState();
 
         setTimeout(()=>{
 
             showPopup(
               "Game Over",
-              "Touch anywhere to start new game",
-              ()=>location.reload()
+              "Touch anywhere to retry this level",
+              ()=>{
+                  gameStarted = true;
+                  startNewGame();
+              }
           );
 
         },400);
@@ -926,25 +1565,13 @@ function buildLayout(){
         return;
     }
 
+    saveGameState();
     requestDraw();
-
-        if(pathsMap.size===0){
-
-        setTimeout(()=>{
-
-            showPopup(
-                "Level Pass",
-                "Touch anywhere to start next level",
-                ()=>location.reload()
-            );
-
-        },500);
-
-    }
 
     return;
 }
 
+    progressMade = true;
     pathsMap.delete(id);
     for(const [r,c] of path.cells) grid[r][c] = -1;
 
@@ -967,35 +1594,167 @@ function buildLayout(){
 
   requestDraw();
 
+  saveGameState();
+
   checkLevelComplete();
-
-          // Level complete
-      if (pathsMap.size === 0) {
-
-          setTimeout(() => {
-
-              showPopup(
-                  "Level Pass",
-                  "Touch anywhere to start next level",
-                  () => location.reload()
-              );
-
-          }, duration);
-
-      }
   }
 
-  canvas.addEventListener('click', (e) => handleTap(e.clientX, e.clientY));
-  canvas.addEventListener('touchstart', (e) => {
+  // ---------------------------------------------------------------
+  // Zoom & pan
+  //
+  // #boardFrame is scaled/translated with a CSS transform (transform-origin
+  // top-left) inside the fixed-size, overflow:hidden #boardViewport. Because
+  // the canvas's actual on-screen box (canvas.getBoundingClientRect()) already
+  // reflects that CSS transform, handleTap() only needs to divide by the
+  // current on-screen/natural width ratio to recover the correct board cell -
+  // no separate coordinate math is needed there.
+  // ---------------------------------------------------------------
+
+  function applyBoardTransform(){
+    boardFrame.style.transform = `translate(${boardPanX}px, ${boardPanY}px) scale(${boardZoom})`;
+    const pct = Math.round(boardZoom*100);
+    const resetBtn = document.getElementById('zoomResetBtn');
+    if(resetBtn) resetBtn.textContent = pct + '%';
+    const outBtn = document.getElementById('zoomOutBtn');
+    const inBtn = document.getElementById('zoomInBtn');
+    if(outBtn) outBtn.style.opacity = boardZoom <= MIN_ZOOM ? '.4' : '.88';
+    if(inBtn) inBtn.style.opacity = boardZoom >= MAX_ZOOM ? '.4' : '.88';
+  }
+
+  function clampPan(){
+    const vw = boardViewport.clientWidth, vh = boardViewport.clientHeight;
+    const fw = vw * boardZoom, fh = vh * boardZoom;
+    const minX = Math.min(0, vw - fw);
+    const minY = Math.min(0, vh - fh);
+    boardPanX = Math.max(minX, Math.min(0, boardPanX));
+    boardPanY = Math.max(minY, Math.min(0, boardPanY));
+  }
+
+  // Zooms to `newZoom`, keeping the point under (anchorX, anchorY) - given in
+  // #boardViewport-relative screen coordinates - visually stationary. Falls
+  // back to the viewport center when no anchor is given (button taps).
+  function setZoom(newZoom, anchorX, anchorY){
+    newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
+    if(anchorX == null || anchorY == null){
+      anchorX = boardViewport.clientWidth/2;
+      anchorY = boardViewport.clientHeight/2;
+    }
+    const ux = (anchorX - boardPanX)/boardZoom;
+    const uy = (anchorY - boardPanY)/boardZoom;
+    boardZoom = newZoom;
+    boardPanX = anchorX - boardZoom*ux;
+    boardPanY = anchorY - boardZoom*uy;
+    clampPan();
+    applyBoardTransform();
+  }
+
+  function resetZoomPan(){
+    boardZoom = 1;
+    boardPanX = 0;
+    boardPanY = 0;
+    applyBoardTransform();
+  }
+
+  function viewportRelative(clientX, clientY){
+    const r = boardViewport.getBoundingClientRect();
+    return {x: clientX - r.left, y: clientY - r.top};
+  }
+
+  document.getElementById('zoomInBtn').onclick = () => setZoom(boardZoom + 0.4);
+  document.getElementById('zoomOutBtn').onclick = () => setZoom(boardZoom - 0.4);
+  document.getElementById('zoomResetBtn').onclick = () => resetZoomPan();
+
+  boardViewport.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const t = e.touches[0];
-    if(t) handleTap(t.clientX, t.clientY);
+    const rel = viewportRelative(e.clientX, e.clientY);
+    setZoom(boardZoom - e.deltaY*0.0015, rel.x, rel.y);
   }, {passive:false});
+
+  // Unified pointer handling: one finger with no movement = tap (select an
+  // arrow); one finger dragged while zoomed in = pan; two fingers = pinch to
+  // zoom. Separating tap from pan/pinch this way is what prevents accidental
+  // mis-taps while the player is repositioning a zoomed-in view.
+  const activePointers = new Map();
+  let singleStart = null;   // {x,y,time,moved}
+  let pinchStartDist = 0, pinchStartZoom = 1;
+  const TAP_MOVE_THRESHOLD = 6;
+
+  function onPointerDown(e){
+    if(e.target.closest && e.target.closest('.zoomControls')) return; // let button handle it
+    boardViewport.setPointerCapture && boardViewport.setPointerCapture(e.pointerId);
+    activePointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+
+    if(activePointers.size === 1){
+      singleStart = {x:e.clientX, y:e.clientY, time: performance.now(), moved:false};
+    } else if(activePointers.size === 2){
+      singleStart = null;
+      const pts = [...activePointers.values()];
+      pinchStartDist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
+      pinchStartZoom = boardZoom;
+      boardFrame.classList.add('no-transition');
+    }
+  }
+
+  function onPointerMove(e){
+    const prev = activePointers.get(e.pointerId);
+    if(!prev) return;
+    activePointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+
+    if(activePointers.size === 2){
+      const pts = [...activePointers.values()];
+      const dist = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
+      if(pinchStartDist > 0){
+        const midX = (pts[0].x+pts[1].x)/2, midY = (pts[0].y+pts[1].y)/2;
+        const rel = viewportRelative(midX, midY);
+        setZoom(pinchStartZoom * (dist/pinchStartDist), rel.x, rel.y);
+      }
+      return;
+    }
+
+    if(activePointers.size === 1 && singleStart){
+      const dx = e.clientX - singleStart.x, dy = e.clientY - singleStart.y;
+      if(Math.hypot(dx,dy) > TAP_MOVE_THRESHOLD) singleStart.moved = true;
+      if(boardZoom > MIN_ZOOM && singleStart.moved){
+        boardFrame.classList.add('no-transition');
+        boardPanX += (e.clientX - prev.x);
+        boardPanY += (e.clientY - prev.y);
+        clampPan();
+        applyBoardTransform();
+      }
+    }
+  }
+
+  function onPointerUp(e){
+    const wasCleanTap = activePointers.size === 1 && singleStart && !singleStart.moved;
+    const tapX = e.clientX, tapY = e.clientY;
+    const tapTime = singleStart ? singleStart.time : 0;
+    activePointers.delete(e.pointerId);
+
+    if(activePointers.size === 0){
+      boardFrame.classList.remove('no-transition');
+      if(wasCleanTap && (performance.now() - tapTime) < 600){
+        handleTap(tapX, tapY);
+      }
+      singleStart = null;
+      pinchStartDist = 0;
+    } else if(activePointers.size === 1){
+      // lifted one finger out of a pinch - don't let the remaining finger
+      // register as a fresh tap when it's eventually lifted too
+      pinchStartDist = 0;
+      const [id, pt] = [...activePointers.entries()][0];
+      singleStart = {x: pt.x, y: pt.y, time: performance.now(), moved:true};
+    }
+  }
+
+  boardViewport.addEventListener('pointerdown', onPointerDown);
+  boardViewport.addEventListener('pointermove', onPointerMove);
+  boardViewport.addEventListener('pointerup', onPointerUp);
+  boardViewport.addEventListener('pointercancel', onPointerUp);
 
   function layoutCanvas(){
     const dpr = window.devicePixelRatio || 1;
-    const availW = Math.min(window.innerWidth * 0.80, 480);
-    const availH = window.innerHeight * 0.80;
+    const availW = window.innerWidth * 0.90;
+    const availH = window.innerHeight * 0.72;
     cellSize = Math.floor(Math.min(availW/COLS, availH/ROWS));
     boardW = cellSize*COLS;
     const TOP_BAR = cellSize * 0.9;
@@ -1004,25 +1763,72 @@ function buildLayout(){
 
     canvas.style.width = boardW+'px';
     canvas.style.height = boardH+'px';
+    document.getElementById("topBar").style.width = boardW + "px";
     canvas.width = boardW*dpr;
     canvas.height = boardH*dpr;
     ctx.setTransform(dpr,0,0,dpr,0,0);
 
+    // boardFrame's natural (unscaled) outer size includes its own 10px
+    // padding on each side; size the clipping viewport to match exactly so
+    // zoom=1/pan=0 shows the whole board with no clipping.
+    boardViewport.style.width = (boardW + 20) + 'px';
+    boardViewport.style.height = (boardH + 20) + 'px';
+
+    clampPan();
+    applyBoardTransform();
+
     draw(performance.now());
   }
+
+        loadProgress();
+
+        const hasSave = loadGameState();
+        if(hasSave){
+            gameStarted = true;
+        } else {
+            gameStarted = false;
+            currentLevel = maxUnlockedLevel[gameMode];
+            applyLevelConfig();
+        }
+        updateLives();
+        updateLevelLabel();
 
         window.addEventListener('resize', layoutCanvas);
         layoutCanvas();
 
-      if (!gameStarted) {
-          showMenu();
-      }  
+      // Establish the base history entry as "menu" so the very first back
+      // press (when nothing has been pushed on top of it) falls through to
+      // the browser/device's normal back behavior instead of doing anything
+      // unexpected inside the page.
+      history.replaceState({screen:"menu"}, "");
 
+      // Device/browser back button handling: while playing, back should
+      // return to the menu rather than exiting the page. hideMenu() pushes
+      // a 'game' history entry when gameplay starts, so a back press here
+      // pops back to the 'menu' state we just registered above and this
+      // fires with that state - show the menu instead of letting the page
+      // navigate away. (Handles forward-navigation back into a 'game'
+      // state too, for completeness, though that's rarely reachable from
+      // a device back gesture.)
+      window.addEventListener('popstate', (e) => {
+          const screen = e.state && e.state.screen;
+          if(screen === 'game'){
+              inGameHistoryState = true;
+              hideMenuWithoutHistoryPush();
+              layoutCanvas();
+          } else {
+              inGameHistoryState = false;
+              showMenu();
+          }
+      });
+
+      // Always show the menu on launch, but showMenu() itself decides
+      // whether the Resume button appears (only when gameStarted is true
+      // AND progressMade is true, i.e. there's an actual saved game with
+      // at least one arrow already cleared - a fresh, untouched board
+      // just shows New Game instead).
+      showMenu();
 })();
 </script>
-
-
-
-
 </body>
 </html>
