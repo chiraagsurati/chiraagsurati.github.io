@@ -26,41 +26,48 @@
     gap:18px;
 }
 .menu-box h1{
-    margin:0 0 16px;
+    margin:0 0 26px;
     color:#2c2f4a;
-    font-size:22px;
+    font-size:32px;
     font-weight:900;
     letter-spacing:5px;
 }
 .menu-box button{
-    background:none;
+    background:#ffffff;
     border:none;
+    border-radius:16px;
 
     color:#2c2f4a;
 
-    font-size:14px;
+    font-size:22px;
     font-weight:700;
 
     cursor:pointer;
 
-    padding:2px 10px;
+    padding:14px 34px;
+    min-width:220px;
 
+    box-shadow:0 4px 10px rgba(44,47,74,0.15);
     transition:.15s;
 
 }
 .menu-box button:hover{
-    color:#4d63ff;
-    transform:translateX(8px);
+    background:#4d63ff;
+    color:#ffffff;
+    box-shadow:0 6px 14px rgba(77,99,255,0.35);
+    transform:translateY(-2px);
 
 }
 .menu-box button:active{
-    transform:translateX(4px);
+    transform:translateY(0);
+    box-shadow:0 2px 6px rgba(44,47,74,0.2);
 }
   :root{
     --bg:#d9d8e2;
     --board-bg:#dedde6;
     --pipe:#2c2f4a;
     --dot: rgba(44,47,74,0.28);
+    --ad-banner-height: 50px;
   }
   *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
   html,body{
@@ -70,12 +77,30 @@
     font-family: 'Segoe UI', Roboto, Arial, sans-serif;
     touch-action: none;
   }
+  /* ===========================
+     AD BANNER SLOTS (placeholders)
+     Fixed-position strips sized for a standard 320x50 banner ad.
+     Real ad SDK code will be merged in here later - see the
+     loadBannerAds() JS function further down for the integration
+     point. If the eventual SDK manages its own native overlay view
+     instead of DOM content, the inner placeholder text can simply be
+     left empty; the div still reserves the on-screen space for it.
+  =========================== */
+  .adBanner{
+    position:fixed;
+    left:0; right:0;
+    height:var(--ad-banner-height);
+    z-index:500;
+    user-select:none;
+  }
+  #adBannerTop{ top:0; }
+  #adBannerBottom{ bottom:0; }
   #wrap{
     width:100%; min-height:100%;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     gap:14px;
     overflow-y:auto;
-    padding:10px 0;
+    padding:calc(var(--ad-banner-height) + 10px) 0;
   }
   #title{
     color:#2c2f4a;
@@ -143,6 +168,10 @@
     padding:0 8px;
     font-size:9px;
     letter-spacing:.3px;
+}
+.zoomBtn.active{
+    background:#4d63ff;
+    box-shadow:0 2px 8px rgba(77,99,255,.45);
 }
 #topBar{
     width:fit-content;
@@ -217,6 +246,16 @@
 </style>
 </head>
 <body>
+<!-- Required for Cordova: this is what wires up window.cordova, navigator.app,
+     and the native 'backbutton' event. Without this tag none of the back/exit
+     handling further down in this file can ever fire - Android's default
+     back-button behavior (instantly closing the app) takes over instead.
+     Cordova generates this file automatically at build time into
+     platforms/android/app/src/main/assets/www/cordova.js, so this relative
+     path just needs to match where index.html itself ends up in that build. -->
+<script src="cordova.js"></script>
+<div id="adBannerTop" class="adBanner"></div>
+<div id="adBannerBottom" class="adBanner"></div>
 <div id="wrap">
   <div id="topBar">
     <div id="levelLabel">LEVEL 1</div>
@@ -234,6 +273,7 @@
     <button id="zoomInBtn" class="zoomBtn" title="Zoom in">+</button>
     <button id="zoomOutBtn" class="zoomBtn" title="Zoom out">−</button>
     <button id="zoomResetBtn" class="zoomBtn" title="Reset zoom">100%</button>
+    <button id="gridToggleBtn" class="zoomBtn" title="Show arrow path grid">▦</button>
   </div>
 
   </div>
@@ -246,13 +286,15 @@
 
         <button id="resumeBtn">▶ Resume</button>
 
-        <button id="newBtn">🆕 New Game</button>
+        <button id="newBtn"> New Game</button>
 
         <button id="levelBtn">🏆 Level</button>
 
-        <button id="modeBtn">🎮 Mode</button>
+        <button id="modeBtn">Mode</button>
 
         <button id="muteBtn">🔊 Sound</button>
+
+        <button id="reportBugBtn">🐞 Report Bug</button>
 
         <button id="exitBtn">❌ Exit</button>
      </div>
@@ -265,6 +307,71 @@
   const ctx = canvas.getContext('2d');
   const boardViewport = document.getElementById('boardViewport');
   const boardFrame = document.getElementById('boardFrame');
+
+  // ---- Sound effects ----
+  const ARROW_VOLUME = 0.2;      // 0.0 (silent) - 1.0 (full volume)
+  const LEVEL_PASS_VOLUME = 0.5;
+  const arrowSound = new Audio('Arrow.mp3');
+  const levelPassSound = new Audio('LevelPass.mp3');
+
+  const errorSound = new Audio('Error.mp3');
+  const gameOverSound = new Audio('GameOver.mp3');
+  errorSound.volume = 0.3;
+  gameOverSound.volume = 0.5;
+
+  arrowSound.volume = ARROW_VOLUME;
+  levelPassSound.volume = LEVEL_PASS_VOLUME;
+
+    arrowSound.preload = 'auto';
+    levelPassSound.preload = 'auto';
+    errorSound.preload = 'auto';
+    gameOverSound.preload = 'auto';
+
+    arrowSound.load();
+    levelPassSound.load();
+    errorSound.load();
+    gameOverSound.load();
+
+  // Log load failures early (bad path/missing file/unsupported format) -
+  // these show up in chrome://inspect when debugging the Cordova WebView.
+  [arrowSound, levelPassSound, errorSound, gameOverSound].forEach(s => {
+    s.addEventListener('error', () => {
+      console.warn('Failed to load sound:', s.src, s.error);
+    });
+  });
+
+  // Mobile WebViews (Cordova/Capacitor included) commonly refuse the very
+  // first programmatic .play() call unless it happens inside a "real" user
+  // gesture - and even then some WebView versions are stricter than desktop
+  // browsers about what counts. The standard fix is to "unlock" each
+  // <audio> element with a silent play+pause during the first touch the
+  // user makes anywhere on the page; every .play() call after that unlock
+  // is then allowed to go through normally.
+  let audioUnlocked = false;
+  function unlockAudio(){
+    if(audioUnlocked) return;
+    audioUnlocked = true;
+    [arrowSound, levelPassSound].forEach(s => {
+      const p = s.play();
+      if(p && p.catch){
+        p.then(() => { s.pause(); s.currentTime = 0; })
+         .catch(err => console.warn('Audio unlock failed:', s.src, err));
+      }
+    });
+    document.removeEventListener('touchstart', unlockAudio);
+    document.removeEventListener('pointerdown', unlockAudio);
+  }
+  document.addEventListener('touchstart', unlockAudio, {once:true});
+  document.addEventListener('pointerdown', unlockAudio, {once:true});
+
+  function playSound(sound){
+    // rewind so rapid repeats (e.g. clearing several arrows quickly) don't
+    // get cut off by a still-playing previous instance
+    try{
+      sound.currentTime = 0;
+      sound.play().catch(err => console.warn('Sound blocked/failed:', sound.src, err));
+    }catch(e){ console.warn('Sound error:', sound.src, e); }
+  }
 
       // ---- Config (tweak freely later) ----
     let COLS = 10;
@@ -300,10 +407,15 @@
   let boardZoom = 1, boardPanX = 0, boardPanY = 0;
   const MIN_ZOOM = 1, MAX_ZOOM = 2.6;
   let maxUnlockedLevel = { easy: 1, medium: 1, hard: 1 };
+  // Whether the arrow-path grid overlay is on (toggled via the Grid button
+  // beside the zoom controls); remembered across sessions like the mute
+  // preference.
+  let showGrid = false;
 
   // ---- persistence ----
   const PROGRESS_KEY = 'arrowPuzzleProgress';
   const SAVE_KEY = 'arrowPuzzleSave';
+  const GRID_PREF_KEY = 'arrowPuzzleShowGrid';
 
   function loadProgress(){
     try{
@@ -419,7 +531,10 @@
     // ---- Level difficulty scaling ----
     function getLevelConfig(mode, level){
       const base = MODES[mode];
-      const growth = Math.min(Math.floor((level - 1) / 4), 4);
+      // Board size (rows/cols) only grows with level in Hard mode. Easy and
+      // Medium keep the same fixed grid forever - Easy in particular is for
+      // children, so it should never quietly get harder by growing the board.
+      const growth = mode === 'hard' ? Math.min(Math.floor((level - 1) / 4), 4) : 0;
       const maxSteps = Math.min(12, 7 + Math.floor((level - 1) / 4));
       // minArrowLength must stay comfortably below maxSteps, or the
       // generator can never produce a path that satisfies it (which was
@@ -452,7 +567,7 @@
          function updateMenuStatus(){
             const modeLabel = gameMode.charAt(0).toUpperCase() + gameMode.slice(1);
             document.getElementById("levelBtn").textContent = "🏆 Level : " + currentLevel;
-            document.getElementById("modeBtn").textContent = "🎮 Mode : " + modeLabel;
+            document.getElementById("modeBtn").textContent = "Mode : " + modeLabel;
       }
 
          function showMenu(){
@@ -494,6 +609,13 @@
 
       layoutCanvas();
 
+      // Covers the case where the level was actually already fully
+      // cleared (last arrow tapped) before the app was closed/backgrounded,
+      // so the save was written with zero arrows left but the "Level Pass"
+      // flow never got to run. Safe no-op otherwise - checkLevelComplete()
+      // returns immediately if any arrows remain.
+      checkLevelComplete();
+
         };
 
        function startNewGame() {
@@ -503,13 +625,18 @@
               updateLives();
               updateLevelLabel();
               leaving = [];
-              flashing = new Map();
+              flashing = new Set();
               progressMade = false;
               const layout = buildLayout();
               grid = layout.grid;
               pathsMap = new Map(
                   layout.paths.map(p => [p.id, p])
               );
+              // Grid line overlay is per-game only - start every new game
+              // with it off, regardless of whether it was left on before.
+              showGrid = false;
+              if(typeof updateGridToggleBtn === 'function') updateGridToggleBtn();
+              try{ localStorage.setItem(GRID_PREF_KEY, '0'); }catch(e){}
               resetZoomPan();
               layoutCanvas();
               saveGameState();
@@ -674,18 +801,26 @@
     };
 };
 
-        document.getElementById("muteBtn").onclick=()=>{
-            alert("Coming Soon");
+        let soundMuted = false;
+
+        const muteBtn = document.getElementById("muteBtn");
+
+        function updateMuteButton(){
+            muteBtn.textContent = soundMuted ? "🔇 Mute" : "🔊 Sound";
+        }
+
+        muteBtn.onclick = () => {
+            soundMuted = !soundMuted;
+
+            arrowSound.muted = soundMuted;
+            levelPassSound.muted = soundMuted;
+
+            updateMuteButton();
         };
+
+        updateMuteButton();
+
         document.getElementById("exitBtn").onclick = () => {
-            const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-            // Desktop browsers: do nothing.
-            if (!isMobile) {
-                console.log("Exit is available only on mobile.");
-                return;
-            }
-
             // Cordova / PhoneGap wrapped app.
             if (window.cordova && navigator.app) {
                 navigator.app.exitApp();
@@ -695,6 +830,31 @@
             // Capacitor wrapped app.
             if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
                 window.Capacitor.Plugins.App.exitApp();
+                return;
+            }
+
+            // Common WebView "app builder" tools (Median/GoNative/Appilix/
+            // WebIntoApp and similar) each expose their own global bridge.
+            // Try the well-known ones in case this page was packaged with
+            // one of them.
+            if (window.median && typeof window.median.exitApp === 'function') {
+                window.median.exitApp();
+                return;
+            }
+            if (typeof window.gonative_exit_app === 'function') {
+                window.gonative_exit_app();
+                return;
+            }
+            if (window.Appilix && typeof window.Appilix.exitApp === 'function') {
+                window.Appilix.exitApp();
+                return;
+            }
+            if (window.Android && typeof window.Android.exitApp === 'function') {
+                window.Android.exitApp();
+                return;
+            }
+            if (window.Android && typeof window.Android.close === 'function') {
+                window.Android.close();
                 return;
             }
 
@@ -712,15 +872,173 @@
                 return;
             }
 
-            // Plain mobile browser fallback: only works if this tab/window
-            // was opened via script (window.open); most browsers block
-            // scripts from closing a tab the user opened directly.
-            window.close();
+            // No native wrapper detected: we're running as a plain web page
+            // (desktop or mobile browser tab). Modern browsers deliberately
+            // block scripts from closing a tab the user opened themselves -
+            // this is a security restriction, not a bug, and no website can
+            // override it. window.close() only succeeds on a tab/window
+            // that was itself opened by a script (window.open).
+            //
+            // The reassign-opener trick below (window.open('', '_self') then
+            // window.close()) makes the browser treat this tab as
+            // script-opened, which does let some mobile browsers close it.
+            // It still won't work everywhere, so we always follow up with a
+            // visible message rather than silently doing nothing.
+            try {
+                window.open('', '_self');
+                window.close();
+            } catch (err) {
+                // ignore - handled by the fallback message below
+            }
+
+            setTimeout(() => {
+                if (!document.hidden) {
+                    showPopup(
+                        "Exit",
+                        "Your browser doesn't allow this page to close its own tab. Please close the tab manually to exit.",
+                        null
+                    );
+                }
+            }, 150);
         };
         document.getElementById("menuBtn").onclick = () => {
 
             showMenu();
 
+        };
+
+        document.getElementById("reportBugBtn").onclick = () => {
+
+            const old = document.getElementById("reportPopup");
+            if(old) old.remove();
+
+            const report =
+`Mode: ${gameMode}
+Level: ${currentLevel}
+Board: ${ROWS} rows x ${COLS} cols
+Lives: ${lives}
+Time: ${new Date().toISOString()}
+User agent: ${navigator.userAgent}`;
+
+            const popup = document.createElement("div");
+            popup.id = "reportPopup";
+
+            popup.style.cssText = `
+                position:fixed;
+                inset:0;
+                background:rgba(0,0,0,.45);
+                display:flex;
+                justify-content:center;
+                align-items:center;
+                z-index:99999;
+            `;
+
+            popup.innerHTML = `
+                <div style="
+                    background:white;
+                    padding:18px;
+                    border-radius:18px;
+                    width:260px;
+                    text-align:center;
+                    box-shadow:0 15px 40px rgba(0,0,0,.25);
+                ">
+                    <div style="
+                        font-size:15px;
+                        font-weight:bold;
+                        color:#2c2f4a;
+                        margin-bottom:10px;
+                    ">
+                        🐞 Report Bug / Error
+                    </div>
+
+                    <div style="
+                        font-size:11px;
+                        color:#2c2f4a;
+                        margin-bottom:10px;
+                    ">
+                        Describe what went wrong below. Your current mode,
+                        level and device details are included automatically.
+                    </div>
+
+                    <textarea id="reportDescInput" placeholder="What happened?" style="
+                        width:100%;
+                        min-height:60px;
+                        border:1px solid #d9d8e2;
+                        border-radius:10px;
+                        padding:8px;
+                        font-size:12px;
+                        font-family:inherit;
+                        resize:vertical;
+                        box-sizing:border-box;
+                        margin-bottom:10px;
+                    "></textarea>
+
+                    <textarea id="reportDetailsBox" readonly style="
+                        width:100%;
+                        min-height:90px;
+                        border:1px solid #d9d8e2;
+                        border-radius:10px;
+                        padding:8px;
+                        font-size:10px;
+                        font-family:monospace;
+                        color:#666;
+                        resize:vertical;
+                        box-sizing:border-box;
+                        margin-bottom:12px;
+                    ">${report}</textarea>
+
+                    <button id="reportCopyBtn" style="
+                        width:100%;
+                        padding:10px;
+                        font-size:12px;
+                        margin:5px 0;
+                        font-weight:bold;
+                        border:none;
+                        border-radius:12px;
+                        background:#4d63ff;
+                        color:white;
+                        cursor:pointer;
+                    ">📋 Copy Report</button>
+
+                    <button id="reportCloseBtn" style="
+                        width:100%;
+                        padding:10px;
+                        font-size:12px;
+                        margin:5px 0;
+                        font-weight:bold;
+                        border:none;
+                        border-radius:12px;
+                        background:#2c2f4a;
+                        color:white;
+                        cursor:pointer;
+                    ">Close</button>
+                </div>
+            `;
+
+            document.body.appendChild(popup);
+
+            document.getElementById("reportCopyBtn").onclick = () => {
+                const desc = document.getElementById("reportDescInput").value.trim();
+                const fullReport = (desc ? ("Description: " + desc + "\n\n") : "") + report;
+                const finish = (ok) => {
+                    const btn = document.getElementById("reportCopyBtn");
+                    if(btn) btn.textContent = ok ? "✅ Copied!" : "⚠️ Copy failed - select manually";
+                };
+                if(navigator.clipboard && navigator.clipboard.writeText){
+                    navigator.clipboard.writeText(fullReport).then(() => finish(true)).catch(() => finish(false));
+                } else {
+                    try{
+                        const box = document.getElementById("reportDetailsBox");
+                        box.value = fullReport;
+                        box.select();
+                        document.execCommand('copy');
+                        finish(true);
+                    }catch(e){ finish(false); }
+                }
+            };
+
+            document.getElementById("reportCloseBtn").onclick = () => popup.remove();
+            popup.onclick = (e) => { if(e.target === popup) popup.remove(); };
         };
 
   function shuffle(arr){
@@ -973,20 +1291,14 @@
         const tail = neighborPath.cells[0];
         const head = neighborPath.cells[neighborPath.cells.length-1];
 
-        if(tail[0]===nr && tail[1]===nc){
-          // attach at the neighbour's tail — headDir is unaffected
-          const newCells = attachEnd === 0
-            ? stub.cells.slice().reverse().concat(neighborPath.cells)
-            : stub.cells.slice().concat(neighborPath.cells);
-          if(newCells.length > MAX_STEPS + 4) continue;
-          if(!isValidChain(newCells)) continue;
-
-          for(const [cr,cc] of stub.cells) grid[cr][cc] = neighborPath.id;
-          neighborPath.cells = newCells;
-          byId.delete(stub.id);
-          return true;
-
-        } else if(head[0]===nr && head[1]===nc){
+        // Check the HEAD first. When the neighbour is itself a single-cell
+        // stub, its tail and head are the same cell, so attaching there
+        // always moves what becomes the new head end and headDir MUST be
+        // recomputed. Checking tail first (the old order) mistook that
+        // case for a tail-only attach and left the stale headDir in
+        // place, which is what produced a misplaced/misaligned arrowhead
+        // on some boards (e.g. Hard level 2).
+        if(head[0]===nr && head[1]===nc){
           // attach at the neighbour's head — recompute headDir
           const extension = attachEnd === 0 ? stub.cells : stub.cells.slice().reverse();
           const newCells = neighborPath.cells.concat(extension);
@@ -1001,6 +1313,19 @@
           for(const [cr,cc] of stub.cells) grid[cr][cc] = neighborPath.id;
           neighborPath.cells = newCells;
           neighborPath.headDir = newHeadDir;
+          byId.delete(stub.id);
+          return true;
+
+        } else if(tail[0]===nr && tail[1]===nc){
+          // attach at the neighbour's tail — headDir is unaffected
+          const newCells = attachEnd === 0
+            ? stub.cells.slice().reverse().concat(neighborPath.cells)
+            : stub.cells.slice().concat(neighborPath.cells);
+          if(newCells.length > MAX_STEPS + 4) continue;
+          if(!isValidChain(newCells)) continue;
+
+          for(const [cr,cc] of stub.cells) grid[cr][cc] = neighborPath.id;
+          neighborPath.cells = newCells;
           byId.delete(stub.id);
           return true;
         }
@@ -1227,12 +1552,12 @@ function buildLayout(){
     let cellSize = 0, boardW = 0, boardH = 0;
 
     let leaving = [];
-    let flashing = new Map();//red flashing arrows
+    let flashing = new Set();//ids of arrows mistouched this game - stay red until cleared
    let animFrameQueued = false;
 
-  const SPEED = 0.62;             // px per ms travelled along the path while exiting
-  const FLASH_DURATION = 380;     // ms
+  const SPEED = 1.24;             // px per ms travelled along the path while exiting (2x speed)
   const RED = '#e0435a';
+  const BLUE = '#4d63ff';         // color for an arrow while it's sliding off after a correct clear
 
   function cellCenter(r,c){
     const TOP_BAR = cellSize * 0.9;
@@ -1245,31 +1570,20 @@ function buildLayout(){
 
   function drawDotGrid(){
 
-      ctx.fillStyle = "#e53935";
-      ctx.font = `bold ${cellSize*0.55}px Arial`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-
-      let hearts = "";
-
-      for(let i=0;i<lives;i++)
-          hearts += "❤ ";
-
     const rDot = Math.max(1, cellSize*0.045);
 
     ctx.fillStyle = 'rgba(44,47,74,0.25)';
-    for(let r=0; r<=ROWS; r++){
-      for(let c=0; c<=COLS; c++){
+    // Dots sit at cell centers (same coordinates cellCenter() uses for
+    // drawing arrows) so the background texture lines up with the paths
+    // the arrows actually travel along. Drawn across every cell, not just
+    // ones that currently hold an arrow - so once an arrow is cleared,
+    // the dots reappear along the line it used to occupy instead of
+    // leaving a blank gap.
+    for(let r=0; r<ROWS; r++){
+      for(let c=0; c<COLS; c++){
+        const [cx, cy] = cellCenter(r,c);
         ctx.beginPath();
-        const TOP_BAR = cellSize * 0.9;
-
-              ctx.arc(
-                  c*cellSize,
-                  TOP_BAR + r*cellSize,
-                  rDot,
-                  0,
-                  Math.PI*2
-              );
+        ctx.arc(cx, cy, rDot, 0, Math.PI*2);
         ctx.fill();
       }
     }
@@ -1317,30 +1631,39 @@ function buildLayout(){
   // draws a pipe strip through an arbitrary list of points, with the arrowhead
   // built from the direction of travel at the very front point
   function drawStrip(pts, headVec, color){
-    const thickness = cellSize * 0.08;  // width of arrow
+    const thickness = cellSize * 0.085;  // width of arrow
 
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.strokeStyle = color;
     ctx.lineWidth = thickness;
 
-    ctx.beginPath();
-    pts.forEach(([x,y], i) => { if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
-    ctx.stroke();
-
     const [ex,ey] = pts[pts.length-1];
-    const tipX = ex + headVec.dx*cellSize*0.22;
-    const tipY = ey + headVec.dy*cellSize*0.22;
+    const tipX = ex;
+    const tipY = ey;
+
+    // Distance from the tip back to the arrowhead's base - kept the same
+    // for every arrow so head size doesn't depend on path length.
+    const headLen = cellSize*0.32;
+    const baseX = ex - headVec.dx*headLen;
+    const baseY = ey - headVec.dy*headLen;
+
+    // Body/tail of the arrow: for multi-cell paths this runs through
+    // every earlier cell up to the head. Single-cell paths have no
+    // earlier cell to start from, so the tail instead starts at the back
+    // edge of that one cell - either way there's always a visible line
+    // leading into the arrowhead, never just a bare triangle floating on
+    // its own.
+    const bodyPts = pts.length >= 2
+      ? pts.slice(0, pts.length-1)
+      : [[ex - headVec.dx*cellSize*0.5, ey - headVec.dy*cellSize*0.5]];
+    const shaftPts = bodyPts.concat([[baseX, baseY]]);
     ctx.beginPath();
-    ctx.moveTo(ex,ey);
-    ctx.lineTo(tipX,tipY);
+    shaftPts.forEach(([x,y], i) => { if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
     ctx.stroke();
 
-    const headLen = cellSize*0.30;
-    const headW = cellSize*0.40;   // width reduced 50% from original 0.40
+    const headW = cellSize*0.26;   // narrower relative to length -> sharper point
     const angle = Math.atan2(headVec.dy, headVec.dx);
-    const baseX = tipX - Math.cos(angle)*headLen;
-    const baseY = tipY - Math.sin(angle)*headLen;
     const perpX = -Math.sin(angle)*headW/2;
     const perpY =  Math.cos(angle)*headW/2;
 
@@ -1356,6 +1679,41 @@ function buildLayout(){
   function drawPathShape(path, color){
     const pts = path.cells.map(([r,c]) => cellCenter(r,c));
     drawStrip(pts, DIRS[path.headDir], color || PIPE_COLOR);
+  }
+
+  // Full-board grid overlay (toggled by the Grid button). Lines run through
+  // the center of each row/column - the exact rows/columns arrows travel
+  // along - rather than around the boxy outline of the board cells, so the
+  // grid reads as "this is the lane an arrow moves through" rather than
+  // "this is a box drawn around it".
+  function drawFullGrid(){
+    ctx.save();
+    ctx.strokeStyle = 'rgba(77,99,255,0.35)';
+    ctx.lineWidth = Math.max(1, cellSize*0.02);
+    const TOP_BAR = cellSize * 0.9;
+
+    // One full-length line per arrow, drawn only along the axis the arrow
+    // actually exits on: a left/right-facing head gets a horizontal line
+    // through its row, an up/down-facing head gets a vertical line through
+    // its column. This shows at a glance which way each arrow will travel,
+    // instead of a full crosshair on every occupied row and column.
+    pathsMap.forEach(path => {
+      const [r, c] = path.cells[path.cells.length - 1]; // head cell
+      if(path.headDir === 'left' || path.headDir === 'right'){
+        const y = TOP_BAR + r*cellSize + cellSize/2;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(COLS*cellSize, y);
+        ctx.stroke();
+      } else {
+        const x = c*cellSize + cellSize/2;
+        ctx.beginPath();
+        ctx.moveTo(x, TOP_BAR);
+        ctx.lineTo(x, TOP_BAR + ROWS*cellSize);
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
   }
 
   function easeInCubic(t){ return t*t*t; }
@@ -1379,18 +1737,10 @@ function buildLayout(){
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--board-bg').trim();
     ctx.fillRect(0,0,boardW,boardH);
     drawDotGrid();
+    if(showGrid) drawFullGrid();
 
     pathsMap.forEach(p => {
-      let color = PIPE_COLOR;
-      const flash = flashing.get(p.id);
-      if(flash !== undefined){
-        const t = (now - flash) / FLASH_DURATION;
-        if(t >= 1){
-          flashing.delete(p.id);
-        } else {
-          color = lerpColor(RED, PIPE_COLOR, Math.min(1,t));
-        }
-      }
+      const color = flashing.has(p.id) ? RED : PIPE_COLOR;
       drawPathShape(p, color);
     });
 
@@ -1400,11 +1750,11 @@ function buildLayout(){
       const shift = item.total_extra_travel * easeInCubic(t);
       const headVec = DIRS[item.path.headDir];
       const newPts = item.cum.map(s => pointAtArclength(item.pts, item.cum, s + shift, headVec));
-      drawStrip(newPts, headVec, PIPE_COLOR);
+      drawStrip(newPts, headVec, BLUE);
       return t < 1;
     });
 
-    if(leaving.length > 0 || flashing.size > 0){
+    if(leaving.length > 0){
       requestAnimationFrame(draw);
     } else {
       animFrameQueued = false;
@@ -1418,7 +1768,108 @@ function buildLayout(){
     }
   }
 
-  function showPopup(title, message, callback){
+  // Confetti celebration: two cannons fire from the bottom-left and
+  // bottom-right corners of the screen, arcing pieces up and inward. Used
+  // on the level-complete popup. Runs on its own full-screen canvas so it
+  // sits above everything (including the popup) without disturbing the
+  // board/canvas rendering underneath.
+  function launchConfetti(){
+    const dpr = window.devicePixelRatio || 1;
+    const W = window.innerWidth, H = window.innerHeight;
+
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = `
+        position:fixed;
+        inset:0;
+        pointer-events:none;
+        z-index:10000;
+    `;
+    canvas.width = W*dpr;
+    canvas.height = H*dpr;
+    canvas.style.width = W+'px';
+    canvas.style.height = H+'px';
+    document.body.appendChild(canvas);
+
+    const cctx = canvas.getContext('2d');
+    cctx.setTransform(dpr,0,0,dpr,0,0);
+
+    const COLORS = ['#ff6b6b','#ffd93d','#6bcb77','#4d96ff','#c77dff','#ff9f1c','#ff5da2'];
+    const particles = [];
+
+    // side: -1 = cannon on the left edge firing rightward/up,
+    //        1 = cannon on the right edge firing leftward/up
+    function spawnBurst(side){
+      const x = side < 0 ? -10 : W+10;
+      const count = 34;
+      for(let i=0;i<count;i++){
+        const spread = (Math.random()*0.55 + 0.12); // 0.12..0.67 rad off straight-up
+        const angle = -Math.PI/2 + side*-1*spread; // tilt inward, toward center
+        const speed = 9 + Math.random()*8;
+        particles.push({
+          x, y: H*0.85,
+          vx: Math.cos(angle)*speed,
+          vy: Math.sin(angle)*speed,
+          size: 5 + Math.random()*6,
+          color: COLORS[Math.floor(Math.random()*COLORS.length)],
+          rot: Math.random()*Math.PI*2,
+          vr: (Math.random()-0.5)*0.35,
+          shape: Math.random() < 0.5 ? 'rect' : 'circle',
+          life: 0,
+          maxLife: 85 + Math.random()*45
+        });
+      }
+    }
+
+    spawnBurst(-1);
+    spawnBurst(1);
+    const secondBurstTimer = setTimeout(() => { spawnBurst(-1); spawnBurst(1); }, 260);
+
+    const gravity = 0.22;
+    const drag = 0.995;
+    let raf;
+
+    function frame(){
+      cctx.clearRect(0,0,W,H);
+      for(let i=particles.length-1;i>=0;i--){
+        const p = particles[i];
+        p.vy += gravity;
+        p.vx *= drag;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rot += p.vr;
+        p.life++;
+        const alpha = Math.max(0, 1 - p.life/p.maxLife);
+        cctx.save();
+        cctx.translate(p.x,p.y);
+        cctx.rotate(p.rot);
+        cctx.globalAlpha = alpha;
+        cctx.fillStyle = p.color;
+        if(p.shape === 'rect'){
+          cctx.fillRect(-p.size/2, -p.size/3, p.size, p.size*0.6);
+        } else {
+          cctx.beginPath();
+          cctx.arc(0,0,p.size/2,0,Math.PI*2);
+          cctx.fill();
+        }
+        cctx.restore();
+        if(p.life > p.maxLife || p.y > H+60) particles.splice(i,1);
+      }
+      if(particles.length > 0){
+        raf = requestAnimationFrame(frame);
+      } else {
+        canvas.remove();
+      }
+    }
+    raf = requestAnimationFrame(frame);
+
+    return function stopConfetti(){
+      clearTimeout(secondBurstTimer);
+      cancelAnimationFrame(raf);
+      canvas.remove();
+    };
+  }
+
+  function showPopup(title, message, callback, celebrate){
 
     const old = document.getElementById("gamePopup");
     if(old) old.remove();
@@ -1465,7 +1916,11 @@ function buildLayout(){
         </div>
     `;
 
+    const stopConfetti = celebrate ? launchConfetti() : null;
+
     popup.addEventListener("click",()=>{
+
+        if(stopConfetti) stopConfetti();
 
         popup.remove();
 
@@ -1478,9 +1933,125 @@ function buildLayout(){
 
 }
 
+    // Game Over gets its own popup (rather than reusing showPopup) because
+    // it needs an extra tappable button - "Watch Ad for +1 Life" - alongside
+    // the existing "tap anywhere to retry" behavior. Tapping the button
+    // itself must NOT also trigger the backdrop's retry handler, hence the
+    // stopPropagation() below.
+    function showGameOverPopup(retryCallback){
+
+    const old = document.getElementById("gamePopup");
+    if(old) old.remove();
+
+    const popup = document.createElement("div");
+    popup.id = "gamePopup";
+
+    popup.style.cssText = `
+        position:fixed;
+        inset:0;
+        background:rgba(0,0,0,.45);
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        z-index:9999;
+        cursor:pointer;
+    `;
+
+    popup.innerHTML = `
+        <div style="
+            background:white;
+            border-radius:18px;
+            padding:28px 36px;
+            text-align:center;
+            box-shadow:0 15px 40px rgba(0,0,0,.25);
+            min-width:260px;
+        ">
+            <div style="
+                font-size:30px;
+                font-weight:bold;
+                color:#2c2f4a;
+                margin-bottom:14px;
+            ">
+                Game Over
+            </div>
+
+            <div style="
+                font-size:17px;
+                color:#666;
+                margin-bottom:18px;
+            ">
+                Touch anywhere to retry this level
+            </div>
+
+            <!-- "Watch Ad for +1 Life" temporarily disabled until the real
+                 ad SDK is wired in (see loadBannerAds/showRewardedAd below).
+                 Re-enable this button once ads are added. -->
+            <!--
+            <button id="watchAdLifeBtn" style="
+                background:#4d63ff;
+                border:none;
+                border-radius:12px;
+                color:#fff;
+                font-size:15px;
+                font-weight:700;
+                padding:12px 20px;
+                width:100%;
+                cursor:pointer;
+                box-shadow:0 4px 10px rgba(77,99,255,.35);
+            ">🎬 Watch Ad for +1 Life</button>
+            -->
+        </div>
+    `;
+
+    popup.addEventListener("click", () => {
+        popup.remove();
+        if(retryCallback) retryCallback();
+    });
+
+    document.body.appendChild(popup);
+
+    // Watch-ad-for-extra-life flow disabled for now (no ad SDK yet).
+    // Re-enable alongside the button markup above once ads are added.
+    /*
+    const watchAdBtn = popup.querySelector("#watchAdLifeBtn");
+    watchAdBtn.addEventListener("click", (e) => {
+        e.stopPropagation(); // don't also fire the backdrop's retry handler
+
+        watchAdBtn.disabled = true;
+        watchAdBtn.textContent = "Loading ad...";
+
+        showRewardedAd(
+            () => {
+                // Reward granted: resume play on the same board with 1
+                // life instead of restarting the level.
+                popup.remove();
+                lives = 1;
+                updateLives();
+                gameStarted = true;
+                requestDraw();
+                saveGameState();
+            },
+            () => {
+                // No ad available - let the player retry the normal way
+                // instead of leaving them stuck on a dead button.
+                watchAdBtn.disabled = false;
+                watchAdBtn.textContent = "No ad available - tap to retry";
+            }
+        );
+    });
+    */
+
+}
+
     function checkLevelComplete(){
 
         if(pathsMap.size > 0) return;
+
+        // Fire immediately, still inside the tap's call stack, so the
+        // browser still counts this as triggered by a user gesture -
+        // waiting until the requestAnimationFrame loop below resolves can
+        // be too late and gets the play() call silently blocked.
+        playSound(levelPassSound);
 
         const wait = () => {
 
@@ -1503,7 +2074,8 @@ function buildLayout(){
                           gameStarted = true;
                           clearGameState();
                           startNewGame();
-                      }
+                      },
+                true // celebrate: fire confetti from left & right
             );
 
         };
@@ -1512,7 +2084,8 @@ function buildLayout(){
 
     }
   // tapping an arrow: if the way ahead is clear it slides out head-first, tail
-  // following the same bent path (like a snake); if blocked it flashes red and stays put
+  // following the same bent path (like a snake, drawn in blue while leaving);
+  // if blocked, it turns red and stays red until it's eventually cleared
   function handleTap(clientX, clientY){
 
     const rect = canvas.getBoundingClientRect();
@@ -1539,26 +2112,22 @@ function buildLayout(){
     if(!path) return;
 
     if(!isClear(path)){
-
+      playSound(errorSound);
     lives--;
   updateLives();
-    flashing.set(id, performance.now());
+    flashing.add(id);
 
     if(lives <= 0){
-
+        playSound(gameOverSound);
         requestDraw();
         clearGameState();
 
         setTimeout(()=>{
 
-            showPopup(
-              "Game Over",
-              "Touch anywhere to retry this level",
-              ()=>{
-                  gameStarted = true;
-                  startNewGame();
-              }
-          );
+            showGameOverPopup(() => {
+                gameStarted = true;
+                startNewGame();
+            });
 
         },400);
 
@@ -1573,7 +2142,10 @@ function buildLayout(){
 
     progressMade = true;
     pathsMap.delete(id);
+    flashing.delete(id);
     for(const [r,c] of path.cells) grid[r][c] = -1;
+
+    playSound(arrowSound);
 
     const pts = path.cells.map(([r,c]) => cellCenter(r,c));
     const cum = buildArcLength(pts);
@@ -1664,6 +2236,21 @@ function buildLayout(){
   document.getElementById('zoomOutBtn').onclick = () => setZoom(boardZoom - 0.4);
   document.getElementById('zoomResetBtn').onclick = () => resetZoomPan();
 
+  const gridToggleBtn = document.getElementById('gridToggleBtn');
+  function updateGridToggleBtn(){
+    gridToggleBtn.classList.toggle('active', showGrid);
+  }
+  try{
+    showGrid = localStorage.getItem(GRID_PREF_KEY) === '1';
+  }catch(e){}
+  updateGridToggleBtn();
+  gridToggleBtn.onclick = () => {
+    showGrid = !showGrid;
+    updateGridToggleBtn();
+    try{ localStorage.setItem(GRID_PREF_KEY, showGrid ? '1' : '0'); }catch(e){}
+    requestDraw();
+  };
+
   boardViewport.addEventListener('wheel', (e) => {
     e.preventDefault();
     const rel = viewportRelative(e.clientX, e.clientY);
@@ -1681,7 +2268,6 @@ function buildLayout(){
 
   function onPointerDown(e){
     if(e.target.closest && e.target.closest('.zoomControls')) return; // let button handle it
-    boardViewport.setPointerCapture && boardViewport.setPointerCapture(e.pointerId);
     activePointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
 
     if(activePointers.size === 1){
@@ -1753,8 +2339,13 @@ function buildLayout(){
 
   function layoutCanvas(){
     const dpr = window.devicePixelRatio || 1;
+    const adBannerSpace = 2 * 50; // matches --ad-banner-height reserved at top and bottom
     const availW = window.innerWidth * 0.90;
-    const availH = window.innerHeight * 0.72;
+    // Subtract the banner space directly (not inside the 0.72 ratio) so the
+    // board shrinks by exactly the pixels the banners take up, leaving the
+    // zoomControls row (+, -, 100%, grid toggle) below the board still on
+    // screen instead of getting pushed off the bottom.
+    const availH = window.innerHeight * 0.72 - adBannerSpace;
     cellSize = Math.floor(Math.min(availW/COLS, availH/ROWS));
     boardW = cellSize*COLS;
     const TOP_BAR = cellSize * 0.9;
@@ -1780,6 +2371,43 @@ function buildLayout(){
     draw(performance.now());
   }
 
+  // =====================================================================
+  // AD INTEGRATION PLACEHOLDERS
+  // Real ad SDK code (AdMob, Unity Ads, etc.) will be merged in here later.
+  // Everything below is written so that dropping in the real calls only
+  // means editing the bodies of these functions - nothing else in the game
+  // needs to change.
+  // =====================================================================
+
+  // Banner ads: called once on startup. #adBannerTop / #adBannerBottom are
+  // plain fixed-position <div>s reserved for this (see CSS, and the
+  // adBannerSpace adjustment in layoutCanvas). Two common integration
+  // shapes:
+  //   1. SDK renders into the DOM -> put its markup/iframe inside these divs.
+  //   2. SDK renders its own native view on top of the WebView (typical for
+  //      Cordova plugins like admob-plus) -> leave these divs empty (or
+  //      hide them) and just call the SDK's own "show banner at top/bottom"
+  //      API here; the divs still reserve the layout space so the game
+  //      board doesn't sit underneath the native banner.
+  function loadBannerAds(){
+    console.log('[ads] loadBannerAds() placeholder - wire up real ad SDK here');
+  }
+
+  // Rewarded ad: called when the player taps "Watch Ad for +1 Life" on the
+  // Game Over popup. onReward() must ONLY be called once the ad SDK
+  // confirms the ad was watched to completion (e.g. AdMob's
+  // onUserEarnedReward callback) - never on a failed load or a skipped ad.
+  // onUnavailable() should be called if no ad could be shown at all (not
+  // loaded / network error), so the UI can fall back gracefully.
+  function showRewardedAd(onReward, onUnavailable){
+    console.log('[ads] showRewardedAd() placeholder - wire up real ad SDK here');
+    // TEMPORARY until the real SDK is merged in: auto-grants the reward
+    // immediately so the rest of the extra-life flow can be tested end to
+    // end. Delete this line once a real onReward()/onUnavailable() call is
+    // wired to the ad SDK's callbacks.
+    onReward();
+  }
+
         loadProgress();
 
         const hasSave = loadGameState();
@@ -1795,6 +2423,7 @@ function buildLayout(){
 
         window.addEventListener('resize', layoutCanvas);
         layoutCanvas();
+        loadBannerAds();
 
       // Establish the base history entry as "menu" so the very first back
       // press (when nothing has been pushed on top of it) falls through to
@@ -1821,6 +2450,113 @@ function buildLayout(){
               showMenu();
           }
       });
+
+      // ---------------------------------------------------------------
+      // Hardware back button inside a native WebView wrapper (Cordova /
+      // Capacitor / a custom Android or iOS bridge).
+      //
+      // IMPORTANT: none of this is reachable from a plain desktop/mobile
+      // browser tab - that case is already fully handled above via
+      // history.pushState/popstate. This section only matters once the
+      // page is packaged inside a native app shell, because those shells
+      // do NOT translate the hardware/software back button into normal
+      // browser history navigation. Cordova fires its own 'backbutton'
+      // DOM event, and Capacitor fires its own 'backButton' plugin event -
+      // and critically, if nothing listens for either, their default
+      // unhandled behavior is to close/exit the app immediately, which is
+      // exactly the "back exits the game" symptom being reported here.
+      // Simply registering a listener is what suppresses that default
+      // exit-on-back behavior and lets us decide what happens instead.
+      // ---------------------------------------------------------------
+      function handleHardwareBack(){
+          // Debug aid: connect the device via USB, open chrome://inspect on
+          // a desktop Chrome, and inspect this WebView while the APK is
+          // running. If you never see this log line when pressing back, the
+          // event isn't reaching the page at all - that's a native/manifest
+          // issue (see the predictive-back-gesture note), not something in
+          // this file.
+          console.log('[backbutton] handleHardwareBack fired, menuVisible=' +
+              (document.getElementById('menuScreen').style.display !== 'none') +
+              ' gameStarted=' + gameStarted);
+
+          // Any dismissible popup on top (level select, mode select, bug
+          // report, the life-lost/level-complete popup) should close first.
+          const gamePopup = document.getElementById('gamePopup');
+          const levelPopup = document.getElementById('levelPopup');
+          const modePopup = document.getElementById('modePopup');
+          const reportPopup = document.getElementById('reportPopup');
+          if(gamePopup){ gamePopup.remove(); return; }
+          if(levelPopup){ levelPopup.remove(); return; }
+          if(modePopup){ modePopup.remove(); return; }
+          if(reportPopup){ reportPopup.remove(); return; }
+
+          const menuVisible = document.getElementById('menuScreen').style.display !== 'none';
+          if(!menuVisible){
+              // currently playing -> first back press opens the menu (same
+              // screen the in-game ☰ button opens)
+              showMenu();
+          } else {
+              // the menu is already showing - whether it's the true
+              // top-level menu, or a pause overlay back-pressed into from
+              // an in-progress game - a second consecutive back press here
+              // is a genuine "exit" request, so defer to the same exit
+              // logic the Exit button already uses (Cordova/Capacitor/
+              // native bridge aware).
+              document.getElementById('exitBtn').click();
+          }
+      }
+
+      // Cordova: registering a 'backbutton' listener overrides its default
+      // exit-the-app behavior - but Cordova only honors that override if the
+      // listener is attached AFTER 'deviceready' has fired. Attaching it
+      // immediately on page load (before the native bridge finishes
+      // initializing) is a documented race condition where the override
+      // silently fails to bind and the hardware key falls through to the
+      // default "close the app" behavior - which is exactly the symptom of
+      // back not working while Exit (a direct, later, user-triggered call)
+      // does work.
+      let backButtonBound = false;
+      document.addEventListener('deviceready', () => {
+          console.log('[backbutton] deviceready fired, binding backbutton listener');
+          document.addEventListener('backbutton', (e) => {
+              if(e && e.preventDefault) e.preventDefault();
+              handleHardwareBack();
+          }, false);
+          backButtonBound = true;
+      }, false);
+
+      // Diagnostic only: if deviceready hasn't fired within 5s of load, the
+      // native Cordova bridge either isn't present or is failing to
+      // initialize (e.g. cordova.js 404'd in this particular build), which
+      // means the 'backbutton' listener above never gets attached and the
+      // OS's default/legacy back handling takes over instead of this page's
+      // JS. Check chrome://inspect for this warning.
+      setTimeout(() => {
+          if(!backButtonBound){
+              console.warn('[backbutton] deviceready never fired - the Cordova ' +
+                  'backbutton listener was never attached. This is a native ' +
+                  'project issue (missing/broken cordova.js bridge), not something ' +
+                  'fixable in index.html.');
+          }
+      }, 5000);
+
+      // Capacitor: same idea via the App plugin's backButton event.
+      if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App &&
+         typeof window.Capacitor.Plugins.App.addListener === 'function'){
+          window.Capacitor.Plugins.App.addListener('backButton', () => handleHardwareBack());
+      }
+
+      // Fallback for WebView wrappers/plugins that deliver the hardware back
+      // key as a plain keydown (legacy Android back keyCode 4) instead of -
+      // or in addition to - Cordova's custom 'backbutton' event. Harmless to
+      // have both: handleHardwareBack() itself is idempotent per press since
+      // each press only ever fires one of these events.
+      document.addEventListener('keydown', (e) => {
+          if(e.keyCode === 4){
+              e.preventDefault();
+              handleHardwareBack();
+          }
+      }, false);
 
       // Always show the menu on launch, but showMenu() itself decides
       // whether the Resume button appears (only when gameStarted is true
