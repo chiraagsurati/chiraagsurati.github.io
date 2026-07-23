@@ -625,6 +625,7 @@
               updateLives();
               updateLevelLabel();
               leaving = [];
+              bumping = [];
               flashing = new Set();
               progressMade = false;
               const layout = buildLayout();
@@ -1552,6 +1553,7 @@ function buildLayout(){
     let cellSize = 0, boardW = 0, boardH = 0;
 
     let leaving = [];
+    let bumping = []; // arrows currently animating a "wrong move" bump: nudge forward until they touch whatever's blocking them, then spring back
     let flashing = new Set();//ids of arrows mistouched this game - stay red until cleared
    let animFrameQueued = false;
 
@@ -1732,6 +1734,25 @@ function buildLayout(){
     return true;
   }
 
+  // for a blocked arrow: how far (in px) it can nudge forward, straight out
+  // of its head, before its tip touches whatever cell is in the way. Used
+  // for the "wrong move" bump animation - counts clear cells ahead, then
+  // adds half a cell so the tip lands right on the blocker's near edge
+  // rather than stopping short or overlapping into it.
+  function computeBumpDistance(path){
+    const [r,c] = path.cells[path.cells.length-1];
+    const d = DIRS[path.headDir];
+    let rr = r+d.dy, cc = c+d.dx;
+    let clearCells = 0;
+    while(rr>=0 && rr<ROWS && cc>=0 && cc<COLS){
+      const occ = grid[rr][cc];
+      if(occ !== -1 && occ !== path.id) break; // found the blocker
+      clearCells++;
+      rr += d.dy; cc += d.dx;
+    }
+    return (clearCells + 0.5) * cellSize;
+  }
+
   function draw(now){
     ctx.clearRect(0,0,boardW,boardH);
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--board-bg').trim();
@@ -1739,7 +1760,9 @@ function buildLayout(){
     drawDotGrid();
     if(showGrid) drawFullGrid();
 
+    const bumpingIds = new Set(bumping.map(item => item.id));
     pathsMap.forEach(p => {
+      if(bumpingIds.has(p.id)) return; // drawn by the bump animation below instead
       const color = flashing.has(p.id) ? RED : PIPE_COLOR;
       drawPathShape(p, color);
     });
@@ -1754,11 +1777,25 @@ function buildLayout(){
       return t < 1;
     });
 
-    if(leaving.length > 0){
+    // Wrong-move feedback: the tapped arrow nudges forward along its own
+    // path until its tip touches whatever's blocking it, then springs back
+    // to its original slot - staying red the whole time (and after).
+    bumping = bumping.filter(item => {
+      const elapsed = now - item.startTime;
+      const t = Math.min(1, elapsed / item.duration);
+      const shift = item.maxDist * Math.sin(Math.PI * t); // 0 -> maxDist -> 0
+      const headVec = DIRS[item.path.headDir];
+      const newPts = item.cum.map(s => pointAtArclength(item.pts, item.cum, s + shift, headVec));
+      drawStrip(newPts, headVec, RED);
+      return t < 1;
+    });
+
+    if(leaving.length > 0 || bumping.length > 0){
       requestAnimationFrame(draw);
     } else {
       animFrameQueued = false;
     }
+
   }
 
   function requestDraw(){
@@ -2117,6 +2154,21 @@ function buildLayout(){
   updateLives();
     flashing.add(id);
 
+    // "wrong move" feedback: nudge the arrow forward until its tip touches
+    // whatever's blocking it, then spring it back to its original slot.
+    // Replace any in-flight bump for this same arrow rather than stacking.
+    bumping = bumping.filter(item => item.id !== id);
+    const bumpPts = path.cells.map(([r,c]) => cellCenter(r,c));
+    bumping.push({
+      id,
+      path,
+      pts: bumpPts,
+      cum: buildArcLength(bumpPts),
+      maxDist: computeBumpDistance(path),
+      duration: 260,
+      startTime: performance.now()
+    });
+
     if(lives <= 0){
         playSound(gameOverSound);
         requestDraw();
@@ -2143,6 +2195,7 @@ function buildLayout(){
     progressMade = true;
     pathsMap.delete(id);
     flashing.delete(id);
+    bumping = bumping.filter(item => item.id !== id);
     for(const [r,c] of path.cells) grid[r][c] = -1;
 
     playSound(arrowSound);
