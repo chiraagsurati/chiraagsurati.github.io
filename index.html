@@ -12,7 +12,10 @@
 =========================== */
 #menuScreen{
     position:fixed;
-    inset:0;
+    top:0;
+    right:0;
+    bottom:0;
+    left:0;
     background:#d9d8e2;
     display:flex;
     justify-content:center;
@@ -186,11 +189,11 @@
 
     color:#e53935;
 
-    font-size:28px;
+    font-size:20px;
 
     font-weight:bold;
 
-    letter-spacing:4px;
+    letter-spacing:3px;
 
 }
 
@@ -205,6 +208,26 @@
     font-weight:800;
     letter-spacing:1px;
     white-space:nowrap;
+}
+
+#shuffleWarning{
+    /* Absolutely positioned (relative to #topBar, which is
+       position:relative) so toggling this on/off never affects layout -
+       it sits in the gap between the hearts and the board without ever
+       pushing the board down or shifting its fixed position. */
+    position:absolute;
+    left:0;
+    right:0;
+    top:100%;
+    margin-top:6px;
+
+    text-align:center;
+    color:#c9740b;
+    font-size:13px;
+    font-weight:700;
+    letter-spacing:0.3px;
+    pointer-events:none;
+    display:none; /* toggled on via JS only in Hard mode, once 3 or fewer arrows remain before the next reshuffle */
 }
 
 #menuBtn{
@@ -243,6 +266,9 @@
 #menuBtn:active{
     transform:translateY(-50%) scale(.95);
 }
+@keyframes loadingSpin{
+    to{ transform:rotate(360deg); }
+}
 </style>
 </head>
 <body>
@@ -263,6 +289,7 @@
         ❤ ❤ ❤
     </div>
     <button id="menuBtn">☰</button>
+    <div id="shuffleWarning"></div>
 </div>
   <div id="boardViewport">
     <div id="boardFrame">
@@ -292,9 +319,13 @@
 
         <button id="modeBtn">Mode</button>
 
+        <button id="patternBtn">Pattern</button>
+
         <button id="muteBtn">🔊 Sound</button>
 
-        <button id="reportBugBtn">🐞 Report Bug</button>
+        <!-- Report Bug temporarily disabled - see the matching commented-out
+             handler below for reportBugBtn -->
+        <!-- <button id="reportBugBtn">🐞 Report Bug</button> -->
 
         <button id="exitBtn">❌ Exit</button>
      </div>
@@ -387,14 +418,22 @@
             cols: 8
         },
         hard: {
-            rows: 18,
-            cols: 12
+            rows: 14,
+            cols: 10
         }
     };
   const PIPE_COLOR = '#2c2f4a';
   let MAX_STEPS = 13;            // hard cap on how many cells one path can cover (scales with level)
   let MIN_ARROW_LENGTH = 15;      // min cells per path (scales with level)
   let lives = 3;
+  // While a Hard mode reshuffle is computing (can take a noticeable moment
+  // on a big board) the main thread is blocked, so the OS/browser queues
+  // up any taps that happen during that freeze and delivers them the
+  // instant it's free again - by which point the board has changed under
+  // the player's finger. handleTap() ignores anything that arrives before
+  // this timestamp so those stray queued taps can't land on the wrong,
+  // just-reshuffled arrow and cost a life.
+  let inputBlockedUntil = 0;
   let gameStarted = false;
   let progressMade = false; // true once at least one arrow has actually been cleared this level
   let currentLevel = 1;
@@ -407,6 +446,14 @@
   let boardZoom = 1, boardPanX = 0, boardPanY = 0;
   const MIN_ZOOM = 1, MAX_ZOOM = 2.6;
   let maxUnlockedLevel = { easy: 1, medium: 1, hard: 1 };
+  // Arrow texture pattern selection. 'auto' follows the level-based tier
+  // (existing behaviour); any other value pins the board to that specific
+  // pattern regardless of level, until the player switches back to Auto
+  // Select. unlockedPatternTiers is how many ARROW_PATTERN_TYPES entries
+  // (from the start) are available to pick in the Pattern menu - it only
+  // ever grows, tracking the furthest tier reached in any mode.
+  let selectedPatternType = 'auto';
+  let unlockedPatternTiers = 1;
   // Whether the arrow-path grid overlay is on (toggled via the Grid button
   // beside the zoom controls); remembered across sessions like the mute
   // preference.
@@ -435,13 +482,19 @@
           // so nobody's existing progress just vanishes
           maxUnlockedLevel = { easy: saved, medium: saved, hard: saved };
         }
+        if(typeof data.selectedPatternType === 'string'){
+          selectedPatternType = data.selectedPatternType;
+        }
+        if(typeof data.unlockedPatternTiers === 'number'){
+          unlockedPatternTiers = data.unlockedPatternTiers;
+        }
       }
     }catch(e){}
   }
 
   function saveProgress(){
     try{
-      localStorage.setItem(PROGRESS_KEY, JSON.stringify({maxUnlockedLevel}));
+      localStorage.setItem(PROGRESS_KEY, JSON.stringify({maxUnlockedLevel, selectedPatternType, unlockedPatternTiers}));
     }catch(e){}
   }
 
@@ -455,7 +508,9 @@
         cols: COLS,
         grid,
         paths: Array.from(pathsMap.values()),
-        progressMade
+        progressMade,
+        levelArrowTotal,
+        hardShuffleFlags
       }));
     }catch(e){}
   }
@@ -474,6 +529,18 @@
       grid = data.grid;
       pathsMap = new Map(data.paths.map(p => [p.id, p]));
       progressMade = !!data.progressMade;
+      // Older saves won't have these two fields. Falling back to the
+      // current remaining count (with both checkpoints already marked
+      // "done") means a resumed legacy save just skips reshuffling for
+      // the rest of that level, rather than risking a checkpoint firing
+      // on a total it was never measured against.
+      if(typeof data.levelArrowTotal === 'number' && data.hardShuffleFlags){
+          levelArrowTotal = data.levelArrowTotal;
+          hardShuffleFlags = data.hardShuffleFlags;
+      } else {
+          levelArrowTotal = pathsMap.size;
+          hardShuffleFlags = { at20: true, at60: true };
+      }
       return true;
     }catch(e){ return false; }
   }
@@ -535,12 +602,15 @@
       // Medium keep the same fixed grid forever - Easy in particular is for
       // children, so it should never quietly get harder by growing the board.
       const growth = mode === 'hard' ? Math.min(Math.floor((level - 1) / 4), 4) : 0;
-      const maxSteps = Math.min(12, 7 + Math.floor((level - 1) / 4));
-      // minArrowLength must stay comfortably below maxSteps, or the
-      // generator can never produce a path that satisfies it (which was
-      // forcing boards — especially large ones like Hard — to fall back
-      // to plain single-direction straight lines).
-      const minArrowLength = Math.max(4, Math.min(maxSteps - 2, Math.floor(rng() * 3) + 7));
+      // Raised from the original (baseline 7/cap 12, floor 4/random-base 7)
+      // so the smallest arrows the generator aims for are meaningfully
+      // longer - tested empirically (see buildLayout's best-of-N search
+      // below) to keep generation fast and stub arrows rare at this level.
+      // Pushing this further starts fighting the generator: boards can't
+      // always be perfectly tiled by long paths, so being too aggressive
+      // here actually produces MORE small leftover arrows, not fewer.
+      const maxSteps = Math.min(18, 10 + Math.floor((level - 1) / 4));
+      const minArrowLength = Math.max(8, Math.min(maxSteps - 2, Math.floor(rng() * 3) + 10));
       return {
         rows: base.rows + growth,
         cols: base.cols + Math.floor(growth * 0.5),
@@ -568,6 +638,10 @@
             const modeLabel = gameMode.charAt(0).toUpperCase() + gameMode.slice(1);
             document.getElementById("levelBtn").textContent = "🏆 Level : " + currentLevel;
             document.getElementById("modeBtn").textContent = "Mode : " + modeLabel;
+            const patternLabel = selectedPatternType === 'auto'
+                ? 'Auto'
+                : (PATTERN_DISPLAY_NAMES[selectedPatternType] || selectedPatternType);
+            document.getElementById("patternBtn").textContent = "Pattern : " + patternLabel;
       }
 
          function showMenu(){
@@ -618,7 +692,79 @@
 
         };
 
+       // Board generation for Hard mode can take up to ~1-2s (see buildLayout),
+       // which would otherwise just look like a freeze. Showing this overlay
+       // first, then deferring the actual work a tick later, guarantees the
+       // browser paints the overlay before the heavy synchronous work starts
+       // (a synchronous DOM update alone isn't guaranteed to paint before
+       // more synchronous JS runs in the same tick).
+       function showLoadingOverlay(){
+           const old = document.getElementById("loadingOverlay");
+           if(old) old.remove();
+
+           const overlay = document.createElement("div");
+           overlay.id = "loadingOverlay";
+           overlay.style.cssText = `
+               position:fixed;
+               top:0; right:0; bottom:0; left:0;
+               background:rgba(0,0,0,.45);
+               display:flex;
+               justify-content:center;
+               align-items:center;
+               z-index:100000;
+           `;
+           overlay.innerHTML = `
+               <div style="
+                   background:white;
+                   padding:28px 34px;
+                   border-radius:18px;
+                   text-align:center;
+                   box-shadow:0 15px 40px rgba(0,0,0,.25);
+               ">
+                   <div style="
+                       width:36px;
+                       height:36px;
+                       border:4px solid #dfe3ee;
+                       border-top-color:#2c2f4a;
+                       border-radius:50%;
+                       margin:0 auto 14px;
+                       animation:loadingSpin 0.8s linear infinite;
+                   "></div>
+                   <div style="
+                       font-size:15px;
+                       font-weight:bold;
+                       color:#2c2f4a;
+                   ">
+                       Loading your game…
+                   </div>
+               </div>
+           `;
+           document.body.appendChild(overlay);
+       }
+
+       function hideLoadingOverlay(){
+           const el = document.getElementById("loadingOverlay");
+           if(el) el.remove();
+       }
+
        function startNewGame() {
+              // Hard mode's generation is the slow case (see buildLayout) -
+              // show a loading overlay and let the browser paint it before
+              // doing the heavy synchronous work. Easy/Medium are near-
+              // instant, so skip the overlay there entirely rather than
+              // have it flash on and off for a few milliseconds.
+              if(gameMode === 'hard'){
+                  showLoadingOverlay();
+                  setTimeout(() => {
+                      startNewGameNow();
+                      hideLoadingOverlay();
+                  }, 30);
+              } else {
+                  startNewGameNow();
+              }
+          }
+
+       function startNewGameNow() {
 
               applyLevelConfig();
               lives = 3;
@@ -633,6 +779,9 @@
               pathsMap = new Map(
                   layout.paths.map(p => [p.id, p])
               );
+              levelArrowTotal = pathsMap.size;
+              hardShuffleFlags = { at20: false, at60: false };
+              updateShuffleWarning();
               // Grid line overlay is per-game only - start every new game
               // with it off, regardless of whether it was left on before.
               showGrid = false;
@@ -659,6 +808,32 @@
             document.getElementById("levelLabel").textContent = "LEVEL " + currentLevel;
         }
 
+        // Hard mode reshuffles the remaining arrows once 40% of the level's
+        // starting count is cleared, then again at 80% - shown here as a
+        // live "N arrows until shuffle" countdown, once it's close (3 or
+        // fewer left), so the player gets a heads-up right before the board
+        // changes without it being a constant on-screen distraction the
+        // rest of the time. Hidden outside Hard mode, and once the level's
+        // last reshuffle has already fired.
+        const SHUFFLE_WARNING_THRESHOLD = 3;
+        function updateShuffleWarning(){
+            const el = document.getElementById("shuffleWarning");
+            if(gameMode !== 'hard' || levelArrowTotal <= 0 || hardShuffleFlags.at60){
+                el.style.display = 'none';
+                return;
+            }
+            const nextThreshold = hardShuffleFlags.at20 ? 0.8 : 0.4;
+            const neededCleared = Math.ceil(nextThreshold * levelArrowTotal);
+            const clearedSoFar = levelArrowTotal - pathsMap.size;
+            const remaining = Math.max(0, neededCleared - clearedSoFar);
+            if(remaining > SHUFFLE_WARNING_THRESHOLD){
+                el.style.display = 'none';
+                return;
+            }
+            el.textContent = "🔀 Shuffle in " + remaining;
+            el.style.display = 'block';
+        }
+
         document.getElementById("levelBtn").onclick = () => {
 
             const old = document.getElementById("levelPopup");
@@ -669,7 +844,10 @@
 
             popup.style.cssText = `
                 position:fixed;
-                inset:0;
+                top:0;
+                right:0;
+                bottom:0;
+                left:0;
                 background:rgba(0,0,0,.45);
                 display:flex;
                 justify-content:center;
@@ -741,7 +919,10 @@
 
     popup.style.cssText = `
         position:fixed;
-        inset:0;
+        top:0;
+        right:0;
+        bottom:0;
+        left:0;
         background:rgba(0,0,0,.45);
         display:flex;
         justify-content:center;
@@ -801,6 +982,113 @@
             popup.remove();
     };
 };
+
+       document.getElementById("patternBtn").onclick = () => {
+
+        const old = document.getElementById("patternPopup");
+        if(old) old.remove();
+
+        const popup = document.createElement("div");
+        popup.id = "patternPopup";
+
+        popup.style.cssText = `
+            position:fixed;
+            top:0;
+            right:0;
+            bottom:0;
+            left:0;
+            background:rgba(0,0,0,.45);
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            z-index:99999;
+        `;
+
+        // "Auto Select" always available (no preview swatch - it isn't one
+        // fixed pattern), then one row per unlocked pattern tier, each
+        // showing its name alongside a live sample arrow so it's obvious
+        // what you're picking. Locked patterns simply don't show yet, same
+        // approach as the level-select list only going up to
+        // maxUnlockedLevel.
+        let optionsHtml = `<button class="patternSelect" data-pattern="auto">
+                <span>Auto Select</span>
+            </button>`;
+        for(let i = 0; i < unlockedPatternTiers; i++){
+            const type = ARROW_PATTERN_TYPES[i];
+            optionsHtml += `<button class="patternSelect" data-pattern="${type}">
+                <span>${PATTERN_DISPLAY_NAMES[type]}</span>
+                <canvas class="patternPreview" data-preview="${type}" width="120" height="46"></canvas>
+            </button>`;
+        }
+
+        popup.innerHTML = `
+            <div style="
+                background:white;
+                padding:20px;
+                border-radius:20px;
+                width:320px;
+                max-height:80vh;
+                overflow-y:auto;
+                text-align:center;
+                box-shadow:0 15px 40px rgba(0,0,0,.25);
+            ">
+
+                <div style="
+                    font-size:18px;
+                    font-weight:bold;
+                    color:#2c2f4a;
+                    margin-bottom:14px;
+                ">
+                    Select Pattern
+                </div>
+
+                ${optionsHtml}
+
+            </div>
+        `;
+
+        document.body.appendChild(popup);
+        popup.querySelectorAll(".patternSelect").forEach(btn=>{
+            const isActive = btn.dataset.pattern === selectedPatternType;
+            btn.style.cssText=`
+                width:100%;
+                display:flex;
+                align-items:center;
+                justify-content:space-between;
+                padding:8px 14px;
+                font-size:14px;
+                margin:5px 0;
+                font-weight:bold;
+                border:${isActive ? '2px solid #6c9bd1' : '2px solid transparent'};
+                border-radius:14px;
+                background:#2c2f4a;
+                color:white;
+                cursor:pointer;
+            `;
+            btn.onclick=()=>{
+                selectedPatternType = btn.dataset.pattern;
+                saveProgress();
+                updateMenuStatus();
+                requestDraw();
+                popup.remove();
+            };
+        });
+
+        // Fill in each row's live preview swatch now that the canvases are
+        // actually in the DOM (and therefore have a real 2D context).
+        popup.querySelectorAll(".patternPreview").forEach(canvas=>{
+            canvas.style.cssText = `
+                border-radius:6px;
+                background:rgba(255,255,255,0.08);
+            `;
+            drawPatternPreviewIcon(canvas.dataset.preview, canvas);
+        });
+
+        popup.onclick=(e)=>{
+            if(e.target===popup)
+                popup.remove();
+        };
+    };
 
         let soundMuted = false;
 
@@ -908,6 +1196,8 @@
 
         };
 
+        /* Report Bug temporarily disabled - button in the menu HTML above
+           is commented out too. Uncomment both to re-enable.
         document.getElementById("reportBugBtn").onclick = () => {
 
             const old = document.getElementById("reportPopup");
@@ -926,7 +1216,10 @@ User agent: ${navigator.userAgent}`;
 
             popup.style.cssText = `
                 position:fixed;
-                inset:0;
+                top:0;
+                right:0;
+                bottom:0;
+                left:0;
                 background:rgba(0,0,0,.45);
                 display:flex;
                 justify-content:center;
@@ -1041,6 +1334,7 @@ User agent: ${navigator.userAgent}`;
             document.getElementById("reportCloseBtn").onclick = () => popup.remove();
             popup.onclick = (e) => { if(e.target === popup) popup.remove(); };
         };
+        */
 
   function shuffle(arr){
     for(let i=arr.length-1;i>0;i--){
@@ -1146,6 +1440,22 @@ User agent: ${navigator.userAgent}`;
         return false;
       }
 
+      // How many of (r,c)'s orthogonal neighbours are still free, given a
+      // hypothetical extra set of cells this path is about to occupy. Used
+      // to spot moves that would wall a free cell in on every side.
+      function freeNeighborCount(r, c, hypotheticalOccupied){
+        let count = 0;
+        for(const name of DIR_NAMES){
+          const d = DIRS[name];
+          const ar = r+d.dy, ac = c+d.dx;
+          if(ar<0||ar>=ROWS||ac<0||ac>=COLS) continue;
+          if(grid[ar][ac] !== -1) continue;
+          if(hypotheticalOccupied.has(ar+','+ac)) continue;
+          count++;
+        }
+        return count;
+      }
+
       while(cells.length < MAX_STEPS){
         const [r,c] = cells[cells.length-1];
 
@@ -1160,6 +1470,28 @@ User agent: ${navigator.userAgent}`;
           if(touchesSelf(nr, nc, r, c)) continue;          // head/body must never touch itself
           let w = 3;                    // favour turning over continuing straight
           if(lastDir === name) w = 1;
+
+          // Penalize moves that would wall off a neighbouring free cell with
+          // no free neighbours of its own left - that cell would become an
+          // isolated 1-cell island no path can ever reach, which is exactly
+          // what turns into an unmergeable stub arrow later. Not an outright
+          // ban (a rare board might have no other option), just a strong
+          // discouragement so the generator routes around holes instead of
+          // creating them.
+          const hypothetical = new Set(occupied);
+          hypothetical.add(nr+','+nc);
+          for(const name2 of DIR_NAMES){
+            const d2 = DIRS[name2];
+            const ar = nr+d2.dy, ac = nc+d2.dx;
+            if(ar<0||ar>=ROWS||ac<0||ac>=COLS) continue;
+            if(grid[ar][ac] !== -1) continue;
+            if(hypothetical.has(ar+','+ac)) continue;
+            if(freeNeighborCount(ar, ac, hypothetical) === 0){
+              w *= 0.08;
+              break;
+            }
+          }
+
           candidates.push({name, d, nr, nc, w});
         }
         if(candidates.length === 0) break;
@@ -1169,7 +1501,11 @@ User agent: ${navigator.userAgent}`;
           // Don't allow the generator to stop until the minimum length is reached.
           if (cells.length >= MIN_ARROW_LENGTH) {
 
-              const stopChance = 0.10 + (cells.length - MIN_ARROW_LENGTH) * 0.045;
+              // Lower base chance (and gentler growth) than before, so arrows
+              // don't all bunch up right at MIN_ARROW_LENGTH - most paths
+              // now grow noticeably past the minimum before stopping, which
+              // keeps a single board from being dominated by short arrows.
+              const stopChance = 0.05 + (cells.length - MIN_ARROW_LENGTH) * 0.03;
 
               if (rng() < stopChance)
                   break;
@@ -1451,29 +1787,55 @@ function buildFallbackLayout(){
     return {grid, paths, clearId: 0};
 }
 
-function buildLayout(){
+// fast=true trims the search budget down - used for the mid-game Hard mode
+// reshuffle, which (unlike a fresh level) runs synchronously on the main
+// thread in the middle of a tap, on top of an already-large Hard board.
+// The full budget could take ~1.5-2s there, freezing input long enough
+// that a player's next tap lands on the wrong (post-shuffle) arrow.
+// Trimmed too aggressively, though, this budget runs out before finding
+// ANY solvable candidate far too often, silently falling back to the
+// boring straight-parallel-rows layout (buildFallbackLayout) instead -
+// these numbers are tuned to keep that fallback about as rare as it
+// already was at full budget (~1%), while still roughly halving worst-case
+// time versus the non-fast path.
+function buildLayout(fast){
 
     let attempts = 0;
-    const MAX_ATTEMPTS = 2000; // give the real generator much more room before giving up
+    const MAX_ATTEMPTS = fast ? 150 : 250; // bounded so a bad board can never hang the game
+
+    // The random-walk generator can't guarantee every cell lands in a path
+    // >= MIN_ARROW_LENGTH - some short "stub" arrows are inherent to filling
+    // a grid this way, and simply raising MIN_ARROW_LENGTH further only
+    // makes full-board tiling harder (producing MORE stubs, not fewer).
+    // What actually matters to a player is not having several tiny (1-3
+    // cell) arrows cluttering one board. So instead of accepting the first
+    // solvable layout found, keep searching (bounded, so this can't hang)
+    // and remember whichever solvable layout has the fewest tiny stubs,
+    // stopping early once we find one that's already good.
+    let best = null;
+    let bestTinyCount = Infinity;
+    let validCandidates = 0;
+    const MAX_VALID_CANDIDATES = fast ? 3 : 8; // full (expensive) candidates to compare at most
+    const GOOD_ENOUGH_TINY = 2;     // ~"1-2 small arrows" - stop searching once this good
 
     while(true){
 
         attempts++;
 
         if(attempts > MAX_ATTEMPTS){
-            return buildFallbackLayout();
+            return best || buildFallbackLayout();
         }
 
         const {grid, paths: rawPaths} = rawGenerate();
         const paths = mergeStubs(grid, rawPaths);
 
-        // as a light safety net, avoid layouts that still have near-invisible
-        // stub arrows if we can help it — but don't loop forever over rare,
-        // highly-constrained boards.
-        if(attempts < 25){
-            const hasStub = paths.some(p => p.cells.length < MIN_ARROW_LENGTH);
-            if(hasStub) continue;
-        }
+        const tinyCount = paths.filter(p => p.cells.length <= 3).length;
+
+        // Cheap pre-filter: once we already have a confirmed solvable
+        // candidate, skip the expensive validation pipeline (conflict
+        // resolution + full solvability simulation) for boards that are
+        // already no better than it on tiny-stub count.
+        if(best && tinyCount >= bestTinyCount) continue;
 
         const clearId = findClearCandidate(paths);
         if(clearId===null) continue;
@@ -1535,11 +1897,21 @@ function buildLayout(){
         // ALL arrows removable?
         if(removed===resolved.paths.length){
 
-            return{
-                grid,
-                paths:resolved.paths,
-                clearId
-            };
+            validCandidates++;
+
+            if(tinyCount < bestTinyCount){
+                bestTinyCount = tinyCount;
+                best = { grid, paths: resolved.paths, clearId };
+            }
+
+            // Larger boards (more paths) get a proportionally larger
+            // allowance - holding a 40-arrow Hard board to the same
+            // absolute "2 tiny arrows" bar as a 10-arrow Easy board isn't
+            // achievable and would just burn the whole attempt budget.
+            const goodEnough = Math.max(GOOD_ENOUGH_TINY, Math.ceil(resolved.paths.length * 0.1));
+            if(bestTinyCount <= goodEnough || validCandidates >= MAX_VALID_CANDIDATES){
+                return best;
+            }
 
         }
 
@@ -1556,6 +1928,156 @@ function buildLayout(){
     let bumping = []; // arrows currently animating a "wrong move" bump: nudge forward until they touch whatever's blocking them, then spring back
     let flashing = new Set();//ids of arrows mistouched this game - stay red until cleared
    let animFrameQueued = false;
+
+    // Hard mode only: the remaining arrows get reshuffled into a fresh
+    // layout once 40% of the level's starting arrows are cleared, and
+    // again at 80%. levelArrowTotal is the arrow count the level started
+    // with (fractions are measured against this, not the ever-shrinking
+    // current count), and the flags make sure each checkpoint only fires
+    // once per level.
+    let levelArrowTotal = 0;
+    let hardShuffleFlags = { at20: false, at60: false };
+
+    // Fisher-Yates using the level's seeded rng() (not Math.random()) so a
+    // reshuffle is deterministic given the level's seed, same as the rest
+    // of the generator.
+    function seededShuffle(arr){
+        for(let i = arr.length - 1; i > 0; i--){
+            const j = Math.floor(rng() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+
+    // Hard mode checkpoint reshuffle: builds a brand new fully-solvable
+    // layout for the current level's grid/step settings, then keeps only
+    // as many of its arrows as are currently remaining on the board - no
+    // arrows are added. A subset of a solvable layout (cleared in the same
+    // relative order as the full layout) is always itself solvable, since
+    // removing pieces only removes obstacles, so trimming down to the
+    // remaining count can never turn a solvable board unsolvable.
+    function reshuffleRemainingArrows(){
+        const remainingCount = pathsMap.size;
+        if(remainingCount === 0) return;
+
+        // Regenerating a layout across the WHOLE board (300+ cells on a big
+        // Hard board) just to keep a random handful of its arrows afterward
+        // is far more work than necessary once most of the level is
+        // already cleared - that's most of why this could still take
+        // noticeably long. Instead, scope generation to a much smaller
+        // sub-region sized for roughly `remainingCount` arrows: cells
+        // outside that sub-region are simply left empty in the new grid,
+        // exactly like already-cleared cells already are, so this is
+        // visually indistinguishable from the old full-board approach.
+        const origRows = ROWS, origCols = COLS;
+
+        const avgLen = (MIN_ARROW_LENGTH + MAX_STEPS) / 2;
+        const neededCells = Math.min(origRows * origCols, Math.ceil(remainingCount * avgLen * 1.4));
+        // keep it roughly square-ish and matched to the board's own
+        // proportions, so it tiles about as easily as the real board does
+        const aspect = origCols / origRows;
+        let subRows = Math.max(MIN_ARROW_LENGTH + 2, Math.round(Math.sqrt(neededCells / aspect)));
+        let subCols = Math.max(MIN_ARROW_LENGTH + 2, Math.round(Math.sqrt(neededCells * aspect)));
+        subRows = Math.min(subRows, origRows);
+        subCols = Math.min(subCols, origCols);
+
+        ROWS = subRows;
+        COLS = subCols;
+        let layout;
+        try{
+            layout = buildLayout(true); // fast: this runs synchronously mid-tap, see buildLayout's comment
+        } finally {
+            ROWS = origRows;
+            COLS = origCols;
+        }
+
+        // Place the sub-region's paths at a random offset within the real
+        // board instead of always anchoring them to the top-left corner.
+        const rowOffset = Math.floor(rng() * (origRows - subRows + 1));
+        const colOffset = Math.floor(rng() * (origCols - subCols + 1));
+        for(const p of layout.paths){
+            p.cells = p.cells.map(([r,c]) => [r + rowOffset, c + colOffset]);
+        }
+
+        const shuffled = seededShuffle(layout.paths.slice());
+        // Best-effort fallback for the rare case the fresh layout has fewer
+        // total arrows than we need to keep - just keep them all rather
+        // than fail; this only ever gives the player fewer arrows to clear,
+        // never more.
+        const kept = shuffled.slice(0, Math.min(remainingCount, shuffled.length));
+
+        const newGrid = Array.from({length: ROWS}, () => Array(COLS).fill(-1));
+        const newPathsMap = new Map();
+        for(const p of kept){
+            newPathsMap.set(p.id, p);
+            for(const [r,c] of p.cells) newGrid[r][c] = p.id;
+        }
+
+        grid = newGrid;
+        pathsMap = newPathsMap;
+        // Old ids no longer necessarily correspond to anything on the new
+        // board - drop any stale "wrong move" state tied to them. Arrows
+        // already mid-flight in `leaving` are self-contained (they carry
+        // their own points/timing) so they're left alone to finish.
+        flashing = new Set();
+        bumping = [];
+
+        // buildLayout() above just ran synchronously and could have taken
+        // a noticeable moment on a big Hard board - anything the player
+        // tapped during that freeze is still sitting in the event queue
+        // and would otherwise fire against this brand-new layout the
+        // instant this function returns. Swallow taps for a short window
+        // so a stray queued touch can't cost a life on an arrow that
+        // wasn't there when they actually tapped.
+        inputBlockedUntil = performance.now() + 400;
+
+        // Deferred rather than shown immediately: this whole function runs
+        // synchronously inside the pointerup handler, and on real touch
+        // devices the browser fires a compatibility "click" event shortly
+        // after pointerup/touchend at the same screen coordinates. If the
+        // popup were created right here, that trailing click would land on
+        // the brand-new overlay and instantly dismiss it - so it would
+        // never actually be visible, even though the reshuffle itself
+        // still happened. Waiting a couple of frames lets that synthetic
+        // click resolve first (same reason the "Level Pass" popup, which
+        // waits on the leaving animation via requestAnimationFrame, never
+        // has this problem).
+        setTimeout(() => {
+            showPopup(
+                "Arrows Shuffled!",
+                "The remaining arrows have been rearranged",
+                null,
+                false, // no confetti - this is a warning, not a celebration
+                1800   // auto-dismiss so it never blocks play
+            );
+        }, 300);
+
+        requestDraw();
+        saveGameState();
+    }
+
+    // Checked once after every successful arrow clear. Hard mode only.
+    // Fractions are measured against levelArrowTotal (the level's starting
+    // count), not the shrinking current count, so "40%" and "80%" always
+    // refer to the same fixed target. If a single clear jumps straight
+    // past both checkpoints (possible on a very short level) both flags
+    // get marked and only one reshuffle fires.
+    function maybeReshuffleHardMode(){
+        if(gameMode !== 'hard') return;
+        if(pathsMap.size === 0) return; // level just completed
+        if(levelArrowTotal <= 0) return;
+
+        const clearedFraction = (levelArrowTotal - pathsMap.size) / levelArrowTotal;
+
+        if(!hardShuffleFlags.at60 && clearedFraction >= 0.8){
+            hardShuffleFlags.at20 = true;
+            hardShuffleFlags.at60 = true;
+            reshuffleRemainingArrows();
+        } else if(!hardShuffleFlags.at20 && clearedFraction >= 0.4){
+            hardShuffleFlags.at20 = true;
+            reshuffleRemainingArrows();
+        }
+    }
 
   const SPEED = 1.24;             // px per ms travelled along the path while exiting (2x speed)
   const RED = '#e0435a';
@@ -1630,10 +2152,312 @@ function buildLayout(){
     return '#' + ((1<<24)+(r<<16)+(g<<8)+bl).toString(16).slice(1);
   }
 
+  // ---- Level-based arrow fill patterns ----
+  // Normal (non-flashing, non-leaving) arrows are drawn with a repeating
+  // canvas pattern instead of a flat color, and which pattern is used
+  // depends on currentLevel. Red (wrong-move) and blue (clearing) arrows
+  // always stay flat colors - patterns only decorate the "at rest" state
+  // so gameplay feedback colors stay instantly readable.
+  //
+  // Each texture below has its own hardcoded palette (rather than just a
+  // lightened PIPE_COLOR) so the board's whole color mood shifts with the
+  // pattern, not just the pattern's shape.
+  const PATTERN_CHANGE_INTERVAL = 5; // levels per pattern before cycling to the next
+  const ARROW_PATTERN_TYPES = ['solid','contourLines','marbleSwirl','sunsetWave','crimsonBlob','goldenTopo','denimWeave'];
+  const PATTERN_DISPLAY_NAMES = {
+    solid: 'Solid',
+    contourLines: 'Forest',
+    marbleSwirl: 'Ocean',
+    sunsetWave: 'Sunset',
+    crimsonBlob: 'Berry',
+    goldenTopo: 'Gold',
+    denimWeave: 'Denim'
+  };
+  const patternCache = new Map(); // key: `${type}_${tileSizeRounded}` -> CanvasPattern
+
+  function lightenColor(hex, amt){ return lerpColor(hex, '#ffffff', amt); }
+  function darkenColor(hex, amt){ return lerpColor(hex, '#000000', amt); }
+
+  function buildPatternTile(type, tileSize){
+    const tile = document.createElement('canvas');
+    const dpr = window.devicePixelRatio || 1;
+    tile.width = Math.max(2, Math.round(tileSize*dpr));
+    tile.height = Math.max(2, Math.round(tileSize*dpr));
+    const tctx = tile.getContext('2d');
+    tctx.scale(dpr, dpr);
+    const s = tileSize;
+
+    switch(type){
+
+      // Deep forest green nested wavy contour bands (topographic-map look).
+      case 'contourLines': {
+        tctx.fillStyle = '#0d3b2e';
+        tctx.fillRect(0,0,s,s);
+        const bands = [
+          { c: '#1f5c46', w: 0.22 },
+          { c: '#3f8a5f', w: 0.14 },
+          { c: '#8fc98a', w: 0.07 },
+        ];
+        for(const band of bands){
+          tctx.strokeStyle = band.c;
+          tctx.lineWidth = s*band.w;
+          tctx.lineCap = 'round';
+          tctx.beginPath();
+          tctx.moveTo(-s*0.2, s*0.15);
+          tctx.bezierCurveTo(s*0.15, s*0.35, s*0.15, -s*0.05, s*0.5, s*0.15);
+          tctx.bezierCurveTo(s*0.85, s*0.35, s*0.85, s*0.65, s*1.2, s*0.55);
+          tctx.stroke();
+          tctx.beginPath();
+          tctx.moveTo(-s*0.2, s*0.75);
+          tctx.bezierCurveTo(s*0.15, s*0.95, s*0.15, s*0.55, s*0.5, s*0.75);
+          tctx.bezierCurveTo(s*0.85, s*0.95, s*0.85, s*1.25, s*1.2, s*1.15);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Deep blue base with pale swirling marble-like bands.
+      case 'marbleSwirl': {
+        tctx.fillStyle = '#123c63';
+        tctx.fillRect(0,0,s,s);
+        const swirls = [
+          { c: 'rgba(255,255,255,0.55)', w: 0.16, off: 0 },
+          { c: 'rgba(173,214,255,0.65)', w: 0.10, off: s*0.18 },
+          { c: 'rgba(9,38,66,0.6)',      w: 0.08, off: -s*0.16 },
+        ];
+        for(const sw of swirls){
+          tctx.strokeStyle = sw.c;
+          tctx.lineWidth = s*sw.w;
+          tctx.lineCap = 'round';
+          tctx.beginPath();
+          tctx.moveTo(-s*0.1, s*0.5+sw.off);
+          tctx.bezierCurveTo(s*0.3, s*0.1+sw.off, s*0.4, s*0.9+sw.off, s*0.7, s*0.45+sw.off);
+          tctx.bezierCurveTo(s*0.9, s*0.15+sw.off, s*1.1, s*0.6+sw.off, s*1.2, s*0.3+sw.off);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Warm diagonal bands: navy -> cream -> orange -> red, sunset style.
+      case 'sunsetWave': {
+        tctx.fillStyle = '#1c2b3a';
+        tctx.fillRect(0,0,s,s);
+        const stripes = [
+          { c: '#f3e3c3', off: 0.18 },
+          { c: '#e8933a', off: 0.42 },
+          { c: '#c8432e', off: 0.66 },
+        ];
+        for(const st of stripes){
+          tctx.strokeStyle = st.c;
+          tctx.lineWidth = s*0.26;
+          tctx.lineCap = 'round';
+          const o = s*st.off;
+          tctx.beginPath();
+          tctx.moveTo(-s*0.3+o, s*1.3);
+          tctx.lineTo(s*1.3+o, -s*0.3);
+          tctx.moveTo(-s*1.3+o, s*1.3);
+          tctx.lineTo(s*0.3+o, -s*0.3);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Deep crimson base with soft cream blob shapes.
+      case 'crimsonBlob': {
+        tctx.fillStyle = '#8f1330';
+        tctx.fillRect(0,0,s,s);
+        tctx.fillStyle = '#f7e9d8';
+        const blob = (cx,cy,r) => {
+          tctx.beginPath();
+          tctx.ellipse(cx, cy, r, r*0.8, 0.4, 0, Math.PI*2);
+          tctx.fill();
+        };
+        blob(s*0.28, s*0.3, s*0.22);
+        blob(s*0.82, s*0.72, s*0.24);
+        blob(-s*0.05, s*0.85, s*0.16);
+        break;
+      }
+
+      // Golden yellow nested wavy topographic rings (paler two-tone yellow).
+      case 'goldenTopo': {
+        tctx.fillStyle = '#f2b93d';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = '#fbdd8a';
+        tctx.lineCap = 'round';
+        const rings = [0.4, 0.28, 0.16];
+        for(const r of rings){
+          tctx.lineWidth = s*0.08;
+          tctx.beginPath();
+          tctx.ellipse(s*0.5, s*0.5, s*r, s*r*0.75, 0.3, 0, Math.PI*2);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Steel-blue/grey diamond weave with fine crosshatch fabric texture.
+      case 'denimWeave': {
+        tctx.fillStyle = '#3a5f7d';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = 'rgba(214,224,232,0.85)';
+        tctx.lineWidth = Math.max(1, s*0.05);
+        tctx.beginPath();
+        tctx.moveTo(s*0.5, -s*0.1); tctx.lineTo(s*1.1, s*0.5);
+        tctx.moveTo(s*1.1, s*0.5); tctx.lineTo(s*0.5, s*1.1);
+        tctx.moveTo(s*0.5, s*1.1); tctx.lineTo(-s*0.1, s*0.5);
+        tctx.moveTo(-s*0.1, s*0.5); tctx.lineTo(s*0.5, -s*0.1);
+        tctx.stroke();
+        // fine woven texture lines inside each diamond half
+        tctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        tctx.lineWidth = Math.max(1, s*0.015);
+        for(let i=-2;i<=2;i++){
+          tctx.beginPath();
+          tctx.moveTo(0, s*0.5+i*s*0.12);
+          tctx.lineTo(s, s*0.5+i*s*0.12);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      case 'solid':
+      default:
+        tctx.fillStyle = PIPE_COLOR;
+        tctx.fillRect(0,0,s,s);
+        break;
+    }
+    return tile;
+  }
+
+  // Index into ARROW_PATTERN_TYPES for a given level number. Shared by the
+  // drawing code and by the "new pattern unlocked" popup check below, so
+  // both always agree on exactly which level a pattern change lands on.
+  // This WRAPS once the cycle completes (there are only 7 pattern types),
+  // so it's only for picking which pattern to *display* - never use it to
+  // count how many patterns have been unlocked (see getRawPatternTierCount
+  // below for that).
+  function getPatternTierIndex(level){
+    return Math.floor((level - 1) / PATTERN_CHANGE_INTERVAL) % ARROW_PATTERN_TYPES.length;
+  }
+
+  // Uncapped, 1-indexed count of tiers reached by a given level - e.g.
+  // level 1-5 -> 1, level 6-10 -> 2, ... level 36+ -> 8, 9, etc. Unlike
+  // getPatternTierIndex this deliberately does NOT wrap, so it can be
+  // safely clamped to ARROW_PATTERN_TYPES.length to get "how many patterns
+  // are unlocked" without that count resetting back down every time the
+  // display cycle wraps around to Solid again.
+  function getRawPatternTierCount(level){
+    return Math.floor((level - 1) / PATTERN_CHANGE_INTERVAL) + 1;
+  }
+
+  // Brings unlockedPatternTiers up to date with maxUnlockedLevel across all
+  // three modes. Only ever raises it, never lowers - so a save file from
+  // before this feature existed (or someone who's already cleared plenty
+  // of levels) immediately gets the patterns they've effectively already
+  // earned, rather than needing to "re-pass" levels they've already beaten.
+  function syncUnlockedPatternTiers(){
+    let maxCount = 1;
+    for(const m of ['easy','medium','hard']){
+      const lvl = (maxUnlockedLevel && maxUnlockedLevel[m]) || 1;
+      const count = Math.min(ARROW_PATTERN_TYPES.length, getRawPatternTierCount(lvl));
+      if(count > maxCount) maxCount = count;
+    }
+    if(maxCount > unlockedPatternTiers) unlockedPatternTiers = maxCount;
+  }
+
+  // Organic textures (swirls, contour lines, blobs) read better at a
+  // larger tile size than simple geometric ones - each type picks its own
+  // fraction of cellSize.
+  const PATTERN_TILE_SCALE = {
+    solid: 0.16,
+    contourLines: 0.6,
+    marbleSwirl: 0.6,
+    sunsetWave: 0.34,
+    crimsonBlob: 0.5,
+    goldenTopo: 0.45,
+    denimWeave: 0.32,
+  };
+
+  // Returns a fillStyle/strokeStyle-compatible value (flat color string or
+  // CanvasPattern) representing the arrow's "at rest" look for the current
+  // level. Cached per (pattern type, tile size) pair so it's cheap to call
+  // every frame.
+  function getArrowFillStyle(){
+    const type = (selectedPatternType !== 'auto' && ARROW_PATTERN_TYPES.includes(selectedPatternType))
+      ? selectedPatternType
+      : ARROW_PATTERN_TYPES[getPatternTierIndex(currentLevel)];
+    if(type === 'solid') return PIPE_COLOR;
+
+    const scale = PATTERN_TILE_SCALE[type] || 0.3;
+    const tileSize = Math.max(6, Math.round(cellSize * scale));
+    const key = type + '_' + tileSize;
+    let pattern = patternCache.get(key);
+    if(!pattern){
+      const tile = buildPatternTile(type, tileSize);
+      pattern = ctx.createPattern(tile, 'repeat');
+      patternCache.set(key, pattern);
+    }
+    return pattern;
+  }
+
+  // Draws a small sample arrow (shaft + head, same proportions/style as the
+  // real in-game drawStrip) onto a standalone <canvas>, filled with the
+  // given pattern type. Used by the Pattern menu so each option shows what
+  // it actually looks like rather than just its name. Independent of
+  // cellSize/patternCache - it works off the preview canvas's own pixel
+  // size, since menu previews are a fixed small size regardless of board
+  // zoom or cell size.
+  function drawPatternPreviewIcon(type, canvas){
+    const dpr = window.devicePixelRatio || 1;
+    // canvas.width/height at this point are the plain nominal size from the
+    // HTML (e.g. 120x46) - treat that as the intended CSS display size, then
+    // size the real backing store up for a crisp result on high-DPI screens.
+    const cw = canvas.width, ch = canvas.height;
+    canvas.style.width = cw + 'px';
+    canvas.style.height = ch + 'px';
+    canvas.width = Math.round(cw * dpr);
+    canvas.height = Math.round(ch * dpr);
+    const pctx = canvas.getContext('2d');
+    pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    pctx.clearRect(0, 0, cw, ch);
+
+    let fillStyle;
+    if(type === 'solid'){
+      fillStyle = PIPE_COLOR;
+    } else {
+      const scale = PATTERN_TILE_SCALE[type] || 0.3;
+      const tileSize = Math.max(6, Math.round(40 * scale)); // nominal ~40px "cellSize" for preview purposes
+      const tile = buildPatternTile(type, tileSize);
+      fillStyle = pctx.createPattern(tile, 'repeat');
+    }
+
+    const midY = ch/2;
+    const thickness = ch*0.4;
+    const headLen = ch*0.85;
+    const headW = ch*0.75;
+    const tipX = cw - 6;
+    const baseX = tipX - headLen;
+
+    pctx.lineJoin = 'round';
+    pctx.lineCap = 'round';
+    pctx.strokeStyle = fillStyle;
+    pctx.lineWidth = thickness;
+    pctx.beginPath();
+    pctx.moveTo(6, midY);
+    pctx.lineTo(baseX, midY);
+    pctx.stroke();
+
+    pctx.fillStyle = fillStyle;
+    pctx.beginPath();
+    pctx.moveTo(tipX, midY);
+    pctx.lineTo(baseX, midY - headW/2);
+    pctx.lineTo(baseX, midY + headW/2);
+    pctx.closePath();
+    pctx.fill();
+  }
+
   // draws a pipe strip through an arbitrary list of points, with the arrowhead
   // built from the direction of travel at the very front point
   function drawStrip(pts, headVec, color){
-    const thickness = cellSize * 0.085;  // width of arrow
+    const thickness = cellSize * 0.15;  // width of arrow (thickened so patterns/textures actually read)
 
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -1646,7 +2470,7 @@ function buildLayout(){
 
     // Distance from the tip back to the arrowhead's base - kept the same
     // for every arrow so head size doesn't depend on path length.
-    const headLen = cellSize*0.32;
+    const headLen = cellSize*0.38;
     const baseX = ex - headVec.dx*headLen;
     const baseY = ey - headVec.dy*headLen;
 
@@ -1664,7 +2488,7 @@ function buildLayout(){
     shaftPts.forEach(([x,y], i) => { if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
     ctx.stroke();
 
-    const headW = cellSize*0.26;   // narrower relative to length -> sharper point
+    const headW = cellSize*0.34;   // narrower relative to length -> sharper point
     const angle = Math.atan2(headVec.dy, headVec.dx);
     const perpX = -Math.sin(angle)*headW/2;
     const perpY =  Math.cos(angle)*headW/2;
@@ -1761,9 +2585,10 @@ function buildLayout(){
     if(showGrid) drawFullGrid();
 
     const bumpingIds = new Set(bumping.map(item => item.id));
+    const restFillStyle = getArrowFillStyle();
     pathsMap.forEach(p => {
       if(bumpingIds.has(p.id)) return; // drawn by the bump animation below instead
-      const color = flashing.has(p.id) ? RED : PIPE_COLOR;
+      const color = flashing.has(p.id) ? RED : restFillStyle;
       drawPathShape(p, color);
     });
 
@@ -1817,7 +2642,10 @@ function buildLayout(){
     const canvas = document.createElement('canvas');
     canvas.style.cssText = `
         position:fixed;
-        inset:0;
+        top:0;
+        right:0;
+        bottom:0;
+        left:0;
         pointer-events:none;
         z-index:10000;
     `;
@@ -1906,7 +2734,11 @@ function buildLayout(){
     };
   }
 
-  function showPopup(title, message, callback, celebrate){
+  // autoCloseMs is optional - when set, the popup dismisses itself (and
+  // fires callback) after that many ms even if the player never taps it.
+  // Tapping still dismisses it early, either way callback only ever runs
+  // once thanks to the dismissed flag.
+  function showPopup(title, message, callback, celebrate, autoCloseMs){
 
     const old = document.getElementById("gamePopup");
     if(old) old.remove();
@@ -1917,45 +2749,64 @@ function buildLayout(){
 
     popup.style.cssText = `
         position:fixed;
-        inset:0;
+        top:0;
+        right:0;
+        bottom:0;
+        left:0;
         background:rgba(0,0,0,.45);
         display:flex;
         justify-content:center;
         align-items:center;
-        z-index:9999;
+        z-index:10001;
         cursor:pointer;
     `;
 
     popup.innerHTML = `
         <div style="
             background:white;
-            border-radius:18px;
-            padding:28px 36px;
+            border-radius:16px;
+            padding:20px 26px;
             text-align:center;
             box-shadow:0 15px 40px rgba(0,0,0,.25);
-            min-width:260px;
+            min-width:200px;
+            max-width:80vw;
         ">
             <div style="
-                font-size:30px;
+                font-size:22px;
                 font-weight:bold;
                 color:#2c2f4a;
-                margin-bottom:14px;
+                ${message ? 'margin-bottom:10px;' : ''}
             ">
                 ${title}
             </div>
 
+            ${message ? `
             <div style="
-                font-size:17px;
+                font-size:15px;
                 color:#666;
             ">
                 ${message}
             </div>
+            ` : ''}
         </div>
     `;
 
-    const stopConfetti = celebrate ? launchConfetti() : null;
+    let stopConfetti = null;
+    if(celebrate){
+        try {
+            stopConfetti = launchConfetti();
+        } catch(err){
+            // Never let a confetti failure (e.g. a device-specific canvas
+            // quirk) prevent the popup itself from showing.
+            console.error('launchConfetti failed:', err);
+            stopConfetti = null;
+        }
+    }
 
-    popup.addEventListener("click",()=>{
+    let dismissed = false;
+    function dismiss(){
+        if(dismissed) return;
+        dismissed = true;
 
         if(stopConfetti) stopConfetti();
 
@@ -1963,12 +2814,48 @@ function buildLayout(){
 
         if(callback)
             callback();
+    }
 
-    });
+    popup.addEventListener("click", dismiss);
+
+    if(autoCloseMs){
+        setTimeout(() => {
+            // Skip if already dismissed by a tap, or removed some other way
+            // (e.g. the hardware back button handler clears #gamePopup
+            // directly) - isConnected covers both without double-firing.
+            if(!dismissed && popup.isConnected) dismiss();
+        }, autoCloseMs);
+    }
 
     document.body.appendChild(popup);
 
 }
+
+    // Called right before a level starts (after currentLevel has already
+    // been updated to the level about to be played). Shows a "new pattern
+    // unlocked" popup - and only calls onDone() once it's dismissed, so
+    // the pattern change is announced before the player ever sees it on
+    // the board - but only while there are still genuinely new patterns
+    // left to unlock. Once every pattern is unlocked, the display still
+    // cycles through them (via getPatternTierIndex, which wraps), but this
+    // stops announcing anything since nothing new is being earned anymore.
+    function maybeAnnouncePatternUnlock(previousLevel, onDone){
+        const prevCount = Math.min(ARROW_PATTERN_TYPES.length, getRawPatternTierCount(previousLevel));
+        const newCount = Math.min(ARROW_PATTERN_TYPES.length, getRawPatternTierCount(currentLevel));
+        if(newCount <= prevCount || previousLevel < 1){
+            onDone();
+            return;
+        }
+        unlockedPatternTiers = Math.max(unlockedPatternTiers, newCount);
+        saveProgress();
+        showPopup(
+            "New Arrow Pattern Unlock!",
+            "",
+            onDone,
+            true, // celebrate: fire confetti, matches the Level Pass popup
+            2500  // auto-dismiss after 2.5s so it doesn't block starting the level
+        );
+    }
 
     // Game Over gets its own popup (rather than reusing showPopup) because
     // it needs an extra tappable button - "Watch Ad for +1 Life" - alongside
@@ -1985,7 +2872,10 @@ function buildLayout(){
 
     popup.style.cssText = `
         position:fixed;
-        inset:0;
+        top:0;
+        right:0;
+        bottom:0;
+        left:0;
         background:rgba(0,0,0,.45);
         display:flex;
         justify-content:center;
@@ -2101,8 +2991,9 @@ function buildLayout(){
 
             showPopup(
                 "Level Pass",
-                "Touch anywhere to start next level",
+                "Starting next level",
                 () => {
+                          const previousLevel = currentLevel;
                           currentLevel++;
                           if(currentLevel > maxUnlockedLevel[gameMode]){
                               maxUnlockedLevel[gameMode] = currentLevel;
@@ -2110,9 +3001,10 @@ function buildLayout(){
                           }
                           gameStarted = true;
                           clearGameState();
-                          startNewGame();
+                          maybeAnnouncePatternUnlock(previousLevel, startNewGame);
                       },
-                true // celebrate: fire confetti from left & right
+                true, // celebrate: fire confetti from left & right
+                1000  // auto-dismiss after 1s so it doesn't require a tap
             );
 
         };
@@ -2124,6 +3016,8 @@ function buildLayout(){
   // following the same bent path (like a snake, drawn in blue while leaving);
   // if blocked, it turns red and stays red until it's eventually cleared
   function handleTap(clientX, clientY){
+
+    if(performance.now() < inputBlockedUntil) return;
 
     const rect = canvas.getBoundingClientRect();
     // rect reflects the current CSS zoom transform (its width/height are
@@ -2221,6 +3115,8 @@ function buildLayout(){
 
   saveGameState();
 
+  maybeReshuffleHardMode();
+  updateShuffleWarning();
   checkLevelComplete();
   }
 
@@ -2462,6 +3358,7 @@ function buildLayout(){
   }
 
         loadProgress();
+        syncUnlockedPatternTiers();
 
         const hasSave = loadGameState();
         if(hasSave){
@@ -2473,6 +3370,7 @@ function buildLayout(){
         }
         updateLives();
         updateLevelLabel();
+        updateShuffleWarning();
 
         window.addEventListener('resize', layoutCanvas);
         layoutCanvas();
