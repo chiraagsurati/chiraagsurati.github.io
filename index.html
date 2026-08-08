@@ -48,7 +48,7 @@
     cursor:pointer;
 
     padding:14px 34px;
-    min-width:220px;
+    min-width:264px;
 
     box-shadow:0 4px 10px rgba(44,47,74,0.15);
     transition:.15s;
@@ -210,24 +210,38 @@
     white-space:nowrap;
 }
 
-#shuffleWarning{
-    /* Absolutely positioned (relative to #topBar, which is
-       position:relative) so toggling this on/off never affects layout -
-       it sits in the gap between the hearts and the board without ever
-       pushing the board down or shifting its fixed position. */
+#shuffleCountPopup{
+    /* Centered over #boardViewport (not #boardFrame, so it's unaffected
+       by board zoom/pan). Hidden by default; JS adds .show plus a fresh
+       number each time and the CSS animation handles the pop-in/fade-out
+       and hiding itself again afterwards - no display toggling needed. */
     position:absolute;
-    left:0;
-    right:0;
-    top:100%;
-    margin-top:6px;
-
-    text-align:center;
-    color:#c9740b;
-    font-size:13px;
-    font-weight:700;
-    letter-spacing:0.3px;
+    left:50%;
+    top:50%;
+    transform:translate(-50%,-50%);
+    width:84px;
+    height:84px;
+    border-radius:50%;
+    background:rgba(44,47,74,0.55);
+    color:#fff;
+    font-size:38px;
+    font-weight:800;
+    display:flex;
+    align-items:center;
+    justify-content:center;
     pointer-events:none;
-    display:none; /* toggled on via JS only in Hard mode, once 3 or fewer arrows remain before the next reshuffle */
+    opacity:0;
+    z-index:5;
+}
+#shuffleCountPopup.show{
+    animation: shuffleCountPop 0.7s ease-out forwards;
+}
+@keyframes shuffleCountPop{
+    0%   { opacity:0;   transform:translate(-50%,-50%) scale(0.6); }
+    15%  { opacity:1;   transform:translate(-50%,-50%) scale(1.08); }
+    30%  { opacity:1;   transform:translate(-50%,-50%) scale(1); }
+    75%  { opacity:1;   transform:translate(-50%,-50%) scale(1); }
+    100% { opacity:0;   transform:translate(-50%,-50%) scale(0.9); }
 }
 
 #menuBtn{
@@ -269,6 +283,12 @@
 @keyframes loadingSpin{
     to{ transform:rotate(360deg); }
 }
+@keyframes loadingArrowPop{
+    0%{ opacity:0; transform:scale(0.3) rotate(var(--rot)); }
+    30%{ opacity:1; transform:scale(1.15) rotate(var(--rot)); }
+    45%,70%{ opacity:1; transform:scale(1) rotate(var(--rot)); }
+    100%{ opacity:0; transform:scale(0.4) rotate(var(--rot)); }
+}
 </style>
 </head>
 <body>
@@ -289,12 +309,17 @@
         ❤ ❤ ❤
     </div>
     <button id="menuBtn">☰</button>
-    <div id="shuffleWarning"></div>
 </div>
   <div id="boardViewport">
     <div id="boardFrame">
           <canvas id="board"></canvas>
     </div>
+    <!-- Shuffle countdown: a big translucent number that pops up centered
+         over the board and fades out on its own, replacing the old
+         top-bar "Shuffle in N" text. Lives outside #boardFrame (which is
+         what zoom/pan transforms) so it always stays dead-center of the
+         visible board regardless of zoom/pan state. -->
+    <div id="shuffleCountPopup"></div>
   </div>
   <div class="zoomControls">
     <button id="zoomInBtn" class="zoomBtn" title="Zoom in">+</button>
@@ -426,7 +451,7 @@
   let MAX_STEPS = 13;            // hard cap on how many cells one path can cover (scales with level)
   let MIN_ARROW_LENGTH = 15;      // min cells per path (scales with level)
   let lives = 3;
-  // While a Hard mode reshuffle is computing (can take a noticeable moment
+  // While a mode checkpoint reshuffle is computing (can take a noticeable moment
   // on a big board) the main thread is blocked, so the OS/browser queues
   // up any taps that happen during that freeze and delivers them the
   // instant it's free again - by which point the board has changed under
@@ -437,6 +462,13 @@
   let gameStarted = false;
   let progressMade = false; // true once at least one arrow has actually been cleared this level
   let currentLevel = 1;
+  // Timestamp (performance.now()) the current level actually became
+  // playable - set in startNewGameNow(). Used to compute elapsed time on
+  // level clear for the personal-best tracker below. Not persisted across
+  // an app restart mid-level, so resuming after fully closing the app
+  // simply skips the time comparison for that one clear (levelStartTime
+  // stays null) rather than showing a bogus/inflated time.
+  let levelStartTime = null;
   // Tracks whether we've pushed an extra 'game' entry onto the browser history
   // stack on top of the base 'menu' entry, so the device/browser back button
   // returns to the menu instead of exiting the page while playing.
@@ -458,11 +490,524 @@
   // beside the zoom controls); remembered across sessions like the mute
   // preference.
   let showGrid = false;
+  // Total number of level-clear events (all modes, replays included) since
+  // this counter was introduced - drives the review-prompt timing below.
+  let totalLevelsCleared = 0;
 
   // ---- persistence ----
   const PROGRESS_KEY = 'arrowPuzzleProgress';
   const SAVE_KEY = 'arrowPuzzleSave';
   const GRID_PREF_KEY = 'arrowPuzzleShowGrid';
+  const REVIEW_KEY = 'arrowPuzzleReviewPrompt';
+
+  // ---- Daily play streak ----
+  const STREAK_KEY = 'arrowPuzzleStreak';
+
+  function getLocalDateString(d){
+    // Local calendar date (not UTC), so the streak lines up with whatever
+    // day it actually is for the player, not wherever the server clock is.
+    const yr = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const dy = String(d.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${dy}`;
+  }
+
+  // Called once per app boot. Bumps the streak if the player was last here
+  // yesterday, resets to 1 if they skipped a day (or this is day one),
+  // and leaves it alone if they've already been counted today. Shows a
+  // small toast on 2+ day streaks - a fresh streak of 1 isn't worth
+  // celebrating yet.
+  function updateStreakAndMaybeToast(){
+    let state = { count: 0, lastPlayedDate: null };
+    try{
+        const raw = localStorage.getItem(STREAK_KEY);
+        if(raw) state = JSON.parse(raw);
+    }catch(e){}
+
+    const today = getLocalDateString(new Date());
+    if(state.lastPlayedDate === today) return; // already counted today
+
+    const yesterday = getLocalDateString(new Date(Date.now() - 86400000));
+    state.count = (state.lastPlayedDate === yesterday) ? (state.count || 0) + 1 : 1;
+    state.lastPlayedDate = today;
+
+    try{ localStorage.setItem(STREAK_KEY, JSON.stringify(state)); }catch(e){}
+
+    if(state.count >= 2) showStreakToast(state.count);
+  }
+
+  function showStreakToast(count){
+    const old = document.getElementById("streakToast");
+    if(old) old.remove();
+
+    const toast = document.createElement("div");
+    toast.id = "streakToast";
+    toast.style.cssText = `
+        position:fixed;
+        top:16px;
+        left:50%;
+        transform:translateX(-50%) translateY(-20px);
+        background:#2c2f4a;
+        color:#fff;
+        padding:10px 18px;
+        border-radius:30px;
+        font-size:14px;
+        font-weight:700;
+        box-shadow:0 8px 20px rgba(0,0,0,.25);
+        z-index:999999;
+        opacity:0;
+        transition:opacity .35s ease, transform .35s ease;
+        pointer-events:none;
+    `;
+    toast.textContent = `🔥 ${count} day streak!`;
+    document.body.appendChild(toast);
+
+    requestAnimationFrame(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateX(-50%) translateY(0)';
+    });
+
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(-50%) translateY(-20px)';
+        setTimeout(() => toast.remove(), 400);
+    }, 2600);
+  }
+
+
+  // ---- Personal-best level times ----
+  const BEST_TIMES_KEY = 'arrowPuzzleBestTimes';
+  // { "easy:1": 12345, "hard:7": 98765, ... } - elapsed ms from when a
+  // level became playable to when its last arrow cleared.
+  let bestTimes = {};
+
+  function loadBestTimes(){
+    try{
+      const raw = localStorage.getItem(BEST_TIMES_KEY);
+      if(raw) bestTimes = JSON.parse(raw) || {};
+    }catch(e){ bestTimes = {}; }
+  }
+
+  function saveBestTimes(){
+    try{ localStorage.setItem(BEST_TIMES_KEY, JSON.stringify(bestTimes)); }catch(e){}
+  }
+
+  function getBestTimeKey(mode, level){
+    return mode + ':' + level;
+  }
+
+  // ms -> "12.4s" under a minute, "1:05" for a minute or more.
+  function formatElapsedTime(ms){
+    const totalSeconds = ms / 1000;
+    if(totalSeconds < 60) return totalSeconds.toFixed(1) + 's';
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.round(totalSeconds % 60);
+    return minutes + ':' + String(seconds).padStart(2, '0');
+  }
+
+  // Records the just-finished level's time if levelStartTime is available,
+  // updates the best if it's an improvement, and returns a small HTML
+  // snippet to show under "Starting next level..." - or '' if there's
+  // nothing to show (e.g. app was restarted mid-level so there's no
+  // reliable start timestamp for this particular clear).
+  function recordLevelTimeAndGetHtml(mode, level){
+    if(levelStartTime == null) return '';
+
+    const elapsed = performance.now() - levelStartTime;
+    levelStartTime = null;
+    if(elapsed <= 0 || !isFinite(elapsed)) return '';
+
+    const key = getBestTimeKey(mode, level);
+    const prevBest = bestTimes[key];
+    const isNewBest = prevBest == null || elapsed < prevBest;
+    if(isNewBest){
+        bestTimes[key] = elapsed;
+        saveBestTimes();
+    }
+
+    const timeStr = formatElapsedTime(elapsed);
+    const bestStr = formatElapsedTime(isNewBest ? elapsed : prevBest);
+
+    return `<div style="font-size:12px; font-weight:normal; opacity:0.85; margin-top:6px;">
+        ⏱ ${timeStr}${isNewBest
+            ? ' <span style="color:#ffb020; font-weight:700;">New Best!</span>'
+            : ` (Best: ${bestStr})`}
+    </div>`;
+  }
+
+  const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.chiraagsurati.arrowpuzzle';
+
+  // How many levels after the trigger point before asking again if the
+  // player taps "Maybe Later" instead of rating or declining outright.
+  const REVIEW_SNOOZE_LEVELS = 10;
+
+  // { nextPromptAtLevel, dismissedForever } - persisted so the target level
+  // and the "never ask again" choice survive app restarts. Populated by
+  // initReviewPromptState() once totalLevelsCleared is known at boot.
+  let reviewPromptState = null;
+
+  function loadReviewPromptState(){
+    try{
+      const raw = localStorage.getItem(REVIEW_KEY);
+      if(raw) return JSON.parse(raw);
+    }catch(e){}
+    return null;
+  }
+
+  function saveReviewPromptState(){
+    try{ localStorage.setItem(REVIEW_KEY, JSON.stringify(reviewPromptState)); }catch(e){}
+  }
+
+  // Decides WHEN to first ask for a rating. Existing players (anyone who
+  // already had save data before this feature shipped) get asked sooner -
+  // after 5-10 more levels - since they've already proven they like the
+  // game. Brand new installs get asked later, after 10-20 levels, so the
+  // prompt doesn't interrupt someone still deciding if they enjoy it.
+  // Runs at most once per install: after the first run it just loads the
+  // previously-decided state back from storage.
+  function initReviewPromptState(){
+    const existing = loadReviewPromptState();
+    if(existing){
+      reviewPromptState = existing;
+      return;
+    }
+
+    const alreadyHasProgress = ['easy','medium','hard'].some(m => (maxUnlockedLevel[m] || 1) > 1)
+        || localStorage.getItem(SAVE_KEY);
+
+    const randomBetween = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
+    const levelsFromNow = alreadyHasProgress ? randomBetween(5, 10) : randomBetween(10, 20);
+
+    reviewPromptState = {
+        nextPromptAtLevel: totalLevelsCleared + levelsFromNow,
+        dismissedForever: false
+    };
+    saveReviewPromptState();
+  }
+
+  // Opens the Play Store listing. https:// links are already covered by
+  // this app's <allow-intent> whitelist in config.xml, so this hands off
+  // to the Play Store app (or browser) externally rather than navigating
+  // the game's own WebView away from the game.
+  function openPlayStoreForReview(){
+    window.location.href = PLAY_STORE_URL;
+  }
+
+  // ---- "New version available" checker ----
+  // Cordova apps have no built-in way to learn a new version was published
+  // - unlike a native app using Play's In-App Update API, there's no
+  // signal from the OS. This works around that with a tiny version.json
+  // file hosted externally (e.g. on GitHub Pages/raw.githubusercontent.com)
+  // that gets bumped by hand alongside each Play Store release. The app
+  // just polls it and compares against its own baked-in version.
+  //
+  // IMPORTANT: bump APP_VERSION here to match config.xml's version="..."
+  // on every release, and update the hosted JSON's "latestVersion" to the
+  // same value AFTER the new build is live on Play Store (not before -
+  // otherwise players get nagged to update before the update even exists
+  // on the Store yet).
+  const APP_VERSION = '2.0.4';
+
+  // Replace with wherever you actually host this file - e.g. a raw GitHub
+  // URL to a version.json committed in your own repo:
+  //   https://raw.githubusercontent.com/<you>/<repo>/main/version.json
+  // File contents should look like:
+  //   { "latestVersion": "2.0.5", "message": "New patterns and fixes!" }
+  const VERSION_CHECK_URL = 'https://raw.githubusercontent.com/chiraagsurati/arrow-puzzle-meta/main/version.json';
+
+  const UPDATE_NOTIFIED_KEY = 'arrowPuzzleUpdateNotifiedVersion';
+  const UPDATE_CHECK_COOLDOWN_KEY = 'arrowPuzzleUpdateCheckLast';
+  const UPDATE_CHECK_COOLDOWN_MS = 6 * 60 * 60 * 1000; // don't hit the JSON more than once per 6h
+
+  // Simple numeric "x.y.z" comparison - returns true if `a` is newer than `b`.
+  function isVersionNewer(a, b){
+    const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+    const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+    const len = Math.max(pa.length, pb.length);
+    for(let i = 0; i < len; i++){
+      const va = pa[i] || 0, vb = pb[i] || 0;
+      if(va > vb) return true;
+      if(va < vb) return false;
+    }
+    return false;
+  }
+
+  function openPlayStoreForUpdate(){
+    window.location.href = PLAY_STORE_URL;
+  }
+
+  function showUpdateAvailablePopup(message){
+    const old = document.getElementById("updatePopup");
+    if(old) old.remove();
+
+    const popup = document.createElement("div");
+    popup.id = "updatePopup";
+    popup.style.cssText = `
+        position:fixed;
+        top:0; right:0; bottom:0; left:0;
+        background:rgba(0,0,0,.45);
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        z-index:9999;
+    `;
+
+    popup.innerHTML = `
+        <div style="
+            background:white;
+            border-radius:18px;
+            padding:28px 30px;
+            text-align:center;
+            box-shadow:0 15px 40px rgba(0,0,0,.25);
+            min-width:260px;
+            max-width:320px;
+        ">
+            <div style="font-size:38px; margin-bottom:8px;">🚀</div>
+            <div style="font-size:22px; font-weight:bold; color:#2c2f4a; margin-bottom:10px;">
+                Update Available!
+            </div>
+            <div style="font-size:15px; color:#666; margin-bottom:20px; line-height:1.4;">
+                ${message || 'A new version of Arrow Puzzle is ready with improvements.'}
+            </div>
+            <button id="updateNowBtn" style="
+                background:#4d63ff; border:none; border-radius:12px; color:#fff;
+                font-size:16px; font-weight:700; padding:13px 20px; width:100%;
+                cursor:pointer; box-shadow:0 4px 10px rgba(77,99,255,.35); margin-bottom:8px;
+            ">⬆️ Update Now</button>
+            <button id="updateLaterBtn" style="
+                background:transparent; border:none; color:#999;
+                font-size:13px; padding:6px; cursor:pointer;
+            ">Not Now</button>
+        </div>
+    `;
+
+    document.body.appendChild(popup);
+
+    popup.querySelector("#updateNowBtn").addEventListener("click", () => {
+        popup.remove();
+        openPlayStoreForUpdate();
+    });
+
+    popup.querySelector("#updateLaterBtn").addEventListener("click", () => {
+        popup.remove();
+    });
+  }
+
+  // Fires a real system-tray notification (so players see it even if
+  // they're not in the app right now) the FIRST time a given new version
+  // is detected. Uses cordova-plugin-local-notification's immediate
+  // (no trigger) scheduling - foreground:true makes it show even while
+  // the app itself is open, not just when backgrounded.
+  function fireUpdateSystemNotification(latestVersion, message){
+    const hasLocalNotification = window.cordova && window.cordova.plugins &&
+        window.cordova.plugins.notification && window.cordova.plugins.notification.local;
+    if(!hasLocalNotification) return;
+
+    const local = window.cordova.plugins.notification.local;
+    local.schedule({
+        id: 99,
+        title: 'Arrow Puzzle update available',
+        text: message || 'A new version is ready - tap to update!',
+        foreground: true
+    });
+  }
+
+  // ---- General in-app announcements (decoupled from the update popup) ----
+  // Reuses the same hosted JSON, but under an "announcement" key that's
+  // independent of "latestVersion" - so you can push a one-off message
+  // ("New Purple pattern just unlocked at level 50!") to existing players
+  // WITHOUT it implying a new build is available. Add to the hosted file:
+  //   { "latestVersion": "2.0.4",
+  //     "announcement": { "id": "purple-tease-1", "text": "New Purple pattern..." } }
+  // Bump the "id" any time you want the message to show again to players
+  // who already dismissed a previous one - it's only ever shown once per id.
+  const ANNOUNCEMENT_SEEN_KEY = 'arrowPuzzleAnnouncementSeenId';
+
+  function showAnnouncementPopup(text){
+    const old = document.getElementById("announcementPopup");
+    if(old) old.remove();
+
+    const popup = document.createElement("div");
+    popup.id = "announcementPopup";
+    popup.style.cssText = `
+        position:fixed;
+        top:0; right:0; bottom:0; left:0;
+        background:rgba(0,0,0,.45);
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        z-index:9999;
+    `;
+
+    popup.innerHTML = `
+        <div style="
+            background:white;
+            border-radius:18px;
+            padding:28px 30px;
+            text-align:center;
+            box-shadow:0 15px 40px rgba(0,0,0,.25);
+            min-width:260px;
+            max-width:320px;
+        ">
+            <div style="font-size:38px; margin-bottom:8px;">📣</div>
+            <div style="font-size:22px; font-weight:bold; color:#2c2f4a; margin-bottom:10px;">
+                Heads Up!
+            </div>
+            <div style="font-size:15px; color:#666; margin-bottom:20px; line-height:1.4;">
+                ${text}
+            </div>
+            <button id="announcementOkBtn" style="
+                background:#4d63ff; border:none; border-radius:12px; color:#fff;
+                font-size:16px; font-weight:700; padding:13px 20px; width:100%;
+                cursor:pointer; box-shadow:0 4px 10px rgba(77,99,255,.35);
+            ">Got it!</button>
+        </div>
+    `;
+
+    document.body.appendChild(popup);
+    popup.querySelector("#announcementOkBtn").addEventListener("click", () => popup.remove());
+  }
+
+  // Handles the "announcement" half of the hosted JSON. Kept separate from
+  // an update-available popup showing at the same time - if both would
+  // fire in the same check, the update popup wins for this cycle and the
+  // announcement just waits for the next check (still shown exactly once
+  // per id, never skipped, just possibly delayed a few hours).
+  function maybeShowAnnouncement(data, updatePopupShown){
+    if(updatePopupShown) return;
+    if(!data || !data.announcement || typeof data.announcement.id !== 'string') return;
+    if(!data.announcement.text) return;
+
+    const seenId = localStorage.getItem(ANNOUNCEMENT_SEEN_KEY);
+    if(seenId === data.announcement.id) return;
+
+    showAnnouncementPopup(data.announcement.text);
+    localStorage.setItem(ANNOUNCEMENT_SEEN_KEY, data.announcement.id);
+  }
+
+  function checkForUpdate(){
+    const now = Date.now();
+    const lastCheck = parseInt(localStorage.getItem(UPDATE_CHECK_COOLDOWN_KEY) || '0', 10);
+    if(now - lastCheck < UPDATE_CHECK_COOLDOWN_MS) return;
+
+    fetch(VERSION_CHECK_URL, { cache: 'no-store' })
+        .then(res => res.json())
+        .then(data => {
+            localStorage.setItem(UPDATE_CHECK_COOLDOWN_KEY, String(now));
+            if(!data) return;
+
+            let updatePopupShown = false;
+            if(typeof data.latestVersion === 'string' && isVersionNewer(data.latestVersion, APP_VERSION)){
+                showUpdateAvailablePopup(data.message);
+                updatePopupShown = true;
+
+                // Only fire the tray notification once per newly-seen version,
+                // not every single time the popup happens to show again.
+                const alreadyNotified = localStorage.getItem(UPDATE_NOTIFIED_KEY);
+                if(alreadyNotified !== data.latestVersion){
+                    fireUpdateSystemNotification(data.latestVersion, data.message);
+                    localStorage.setItem(UPDATE_NOTIFIED_KEY, data.latestVersion);
+                }
+            }
+
+            maybeShowAnnouncement(data, updatePopupShown);
+        })
+        .catch(err => {
+            console.warn('[update check] failed:', err);
+        });
+  }
+
+
+  function showReviewPopup(onDone){
+    const old = document.getElementById("reviewPopup");
+    if(old) old.remove();
+
+    const popup = document.createElement("div");
+    popup.id = "reviewPopup";
+    popup.style.cssText = `
+        position:fixed;
+        top:0; right:0; bottom:0; left:0;
+        background:rgba(0,0,0,.45);
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        z-index:9999;
+    `;
+
+    popup.innerHTML = `
+        <div style="
+            background:white;
+            border-radius:18px;
+            padding:28px 30px;
+            text-align:center;
+            box-shadow:0 15px 40px rgba(0,0,0,.25);
+            min-width:260px;
+            max-width:320px;
+        ">
+            <div style="font-size:38px; margin-bottom:8px;">⭐️🏹⭐️</div>
+            <div style="font-size:22px; font-weight:bold; color:#2c2f4a; margin-bottom:10px;">
+                Enjoying Arrow Puzzle?
+            </div>
+            <div style="font-size:15px; color:#666; margin-bottom:20px; line-height:1.4;">
+                A quick rating helps a ton and takes 10 seconds. Would you leave one?
+            </div>
+            <button id="reviewRateBtn" style="
+                background:#4d63ff; border:none; border-radius:12px; color:#fff;
+                font-size:16px; font-weight:700; padding:13px 20px; width:100%;
+                cursor:pointer; box-shadow:0 4px 10px rgba(77,99,255,.35); margin-bottom:10px;
+            ">⭐ Rate Now</button>
+            <button id="reviewLaterBtn" style="
+                background:#eef0fb; border:none; border-radius:12px; color:#2c2f4a;
+                font-size:15px; font-weight:600; padding:11px 20px; width:100%;
+                cursor:pointer; margin-bottom:8px;
+            ">Maybe Later</button>
+            <button id="reviewNeverBtn" style="
+                background:transparent; border:none; color:#999;
+                font-size:13px; padding:6px; cursor:pointer;
+            ">No Thanks</button>
+        </div>
+    `;
+
+    document.body.appendChild(popup);
+
+    popup.querySelector("#reviewRateBtn").addEventListener("click", () => {
+        reviewPromptState.dismissedForever = true;
+        saveReviewPromptState();
+        popup.remove();
+        openPlayStoreForReview();
+        if(onDone) onDone();
+    });
+
+    popup.querySelector("#reviewLaterBtn").addEventListener("click", () => {
+        reviewPromptState.nextPromptAtLevel = totalLevelsCleared + REVIEW_SNOOZE_LEVELS;
+        saveReviewPromptState();
+        popup.remove();
+        if(onDone) onDone();
+    });
+
+    popup.querySelector("#reviewNeverBtn").addEventListener("click", () => {
+        reviewPromptState.dismissedForever = true;
+        saveReviewPromptState();
+        popup.remove();
+        if(onDone) onDone();
+    });
+  }
+
+  // Called after every level clear. Shows the rating popup at most once
+  // per threshold crossing, then chains into onDone() either way so the
+  // normal "start next level" flow always continues.
+  function maybeShowReviewPrompt(onDone){
+    totalLevelsCleared++;
+    saveProgress();
+
+    if(!reviewPromptState || reviewPromptState.dismissedForever ||
+       totalLevelsCleared < reviewPromptState.nextPromptAtLevel){
+        if(onDone) onDone();
+        return;
+    }
+
+    showReviewPopup(onDone);
+  }
 
   function loadProgress(){
     try{
@@ -488,13 +1033,16 @@
         if(typeof data.unlockedPatternTiers === 'number'){
           unlockedPatternTiers = data.unlockedPatternTiers;
         }
+        if(typeof data.totalLevelsCleared === 'number'){
+          totalLevelsCleared = data.totalLevelsCleared;
+        }
       }
     }catch(e){}
   }
 
   function saveProgress(){
     try{
-      localStorage.setItem(PROGRESS_KEY, JSON.stringify({maxUnlockedLevel, selectedPatternType, unlockedPatternTiers}));
+      localStorage.setItem(PROGRESS_KEY, JSON.stringify({maxUnlockedLevel, selectedPatternType, unlockedPatternTiers, totalLevelsCleared}));
     }catch(e){}
   }
 
@@ -510,7 +1058,7 @@
         paths: Array.from(pathsMap.values()),
         progressMade,
         levelArrowTotal,
-        hardShuffleFlags
+        shuffleCheckpointIndex
       }));
     }catch(e){}
   }
@@ -530,16 +1078,21 @@
       pathsMap = new Map(data.paths.map(p => [p.id, p]));
       progressMade = !!data.progressMade;
       // Older saves won't have these two fields. Falling back to the
-      // current remaining count (with both checkpoints already marked
+      // current remaining count (with all checkpoints already marked
       // "done") means a resumed legacy save just skips reshuffling for
       // the rest of that level, rather than risking a checkpoint firing
       // on a total it was never measured against.
-      if(typeof data.levelArrowTotal === 'number' && data.hardShuffleFlags){
+      if(typeof data.levelArrowTotal === 'number' && typeof data.shuffleCheckpointIndex === 'number'){
           levelArrowTotal = data.levelArrowTotal;
-          hardShuffleFlags = data.hardShuffleFlags;
+          shuffleCheckpointIndex = data.shuffleCheckpointIndex;
+      } else if(typeof data.levelArrowTotal === 'number' && data.hardShuffleFlags && gameMode === 'hard') {
+          // Compatibility for older Hard-mode saves that stored two boolean
+          // flags instead of the next checkpoint index.
+          levelArrowTotal = data.levelArrowTotal;
+          shuffleCheckpointIndex = data.hardShuffleFlags.at60 ? 2 : (data.hardShuffleFlags.at20 ? 1 : 0);
       } else {
           levelArrowTotal = pathsMap.size;
-          hardShuffleFlags = { at20: true, at60: true };
+          shuffleCheckpointIndex = getShuffleCheckpointsForMode(gameMode).length;
       }
       return true;
     }catch(e){ return false; }
@@ -608,7 +1161,13 @@
       // below) to keep generation fast and stub arrows rare at this level.
       // Pushing this further starts fighting the generator: boards can't
       // always be perfectly tiled by long paths, so being too aggressive
-      // here actually produces MORE small leftover arrows, not fewer.
+      // here actually produces MORE small leftover arrows, not fewer (this
+      // was tested directly: tripling this value not only made generation
+      // ~5x slower on Hard, it *still* left several 1-cell stub arrows on
+      // the board, because those come from isolated leftover cells during
+      // generation - a separate problem from this target, fixed instead in
+      // growCandidate's isolation-avoidance weighting and buildLayout's
+      // best-of-N search below).
       const maxSteps = Math.min(18, 10 + Math.floor((level - 1) / 4));
       const minArrowLength = Math.max(8, Math.min(maxSteps - 2, Math.floor(rng() * 3) + 10));
       return {
@@ -692,12 +1251,64 @@
 
         };
 
-       // Board generation for Hard mode can take up to ~1-2s (see buildLayout),
-       // which would otherwise just look like a freeze. Showing this overlay
-       // first, then deferring the actual work a tick later, guarantees the
-       // browser paints the overlay before the heavy synchronous work starts
-       // (a synchronous DOM update alone isn't guaranteed to paint before
-       // more synchronous JS runs in the same tick).
+       // Board generation can be instant on Easy/Medium and slower on Hard.
+       // Showing this overlay first, then deferring the actual work a tick
+       // later, guarantees the browser paints a quick level-start animation
+       // before the synchronous generation starts.
+       function getStartingLevelAnimationHtml(label){
+           const arrowSpots = [
+               {top:'4%',   left:'8%',  rot:-25, color:'#2c2f4a', delay:0.0},
+               {top:'12%',  left:'82%', rot:40,  color:'#123c63', delay:0.12},
+               {top:'72%',  left:'88%', rot:120, color:'#8f1330', delay:0.24},
+               {top:'78%',  left:'10%', rot:200, color:'#f2b93d', delay:0.36},
+               {top:'44%',  left:'0%',  rot:80,  color:'#3a5f7d', delay:0.48},
+               {top:'48%',  left:'94%', rot:-60, color:'#1f5c46', delay:0.6},
+           ];
+           const arrowsHtml = arrowSpots.map(a => `
+               <span style="
+                   position:absolute;
+                   top:${a.top}; left:${a.left};
+                   font-size:20px;
+                   line-height:1;
+                   color:${a.color};
+                   --rot:${a.rot}deg;
+                   animation:loadingArrowPop 0.95s ease-in-out ${a.delay}s infinite;
+               ">➤</span>
+           `).join('');
+
+           return `
+               <div style="
+                   position:relative;
+                   overflow:hidden;
+                   min-width:210px;
+                   min-height:82px;
+                   padding-top:6px;
+               ">
+                   <div style="position:absolute; inset:0; pointer-events:none;">
+                       ${arrowsHtml}
+                   </div>
+                   <div style="
+                       position:relative;
+                       width:36px;
+                       height:36px;
+                       border:4px solid #dfe3ee;
+                       border-top-color:#2c2f4a;
+                       border-radius:50%;
+                       margin:0 auto 12px;
+                       animation:loadingSpin 0.45s linear infinite;
+                   "></div>
+                   <div style="
+                       position:relative;
+                       font-size:15px;
+                       font-weight:bold;
+                       color:#2c2f4a;
+                   ">
+                       ${label}
+                   </div>
+               </div>
+           `;
+       }
+
        function showLoadingOverlay(){
            const old = document.getElementById("loadingOverlay");
            if(old) old.remove();
@@ -713,30 +1324,19 @@
                align-items:center;
                z-index:100000;
            `;
+
            overlay.innerHTML = `
                <div style="
+                   position:relative;
                    background:white;
-                   padding:28px 34px;
+                   padding:34px 40px;
                    border-radius:18px;
                    text-align:center;
                    box-shadow:0 15px 40px rgba(0,0,0,.25);
+                   overflow:hidden;
+                   min-width:210px;
                ">
-                   <div style="
-                       width:36px;
-                       height:36px;
-                       border:4px solid #dfe3ee;
-                       border-top-color:#2c2f4a;
-                       border-radius:50%;
-                       margin:0 auto 14px;
-                       animation:loadingSpin 0.8s linear infinite;
-                   "></div>
-                   <div style="
-                       font-size:15px;
-                       font-weight:bold;
-                       color:#2c2f4a;
-                   ">
-                       Loading your game…
-                   </div>
+                   ${getStartingLevelAnimationHtml("Starting new level...")}
                </div>
            `;
            document.body.appendChild(overlay);
@@ -747,21 +1347,22 @@
            if(el) el.remove();
        }
 
-       function startNewGame() {
-              // Hard mode's generation is the slow case (see buildLayout) -
-              // show a loading overlay and let the browser paint it before
-              // doing the heavy synchronous work. Easy/Medium are near-
-              // instant, so skip the overlay there entirely rather than
-              // have it flash on and off for a few milliseconds.
-              if(gameMode === 'hard'){
-                  showLoadingOverlay();
+       function startNewGame(skipStartOverlay = false) {
+              if(skipStartOverlay){
+                  startNewGameNow();
+                  return;
+              }
+
+              showLoadingOverlay();
+              const shownAt = performance.now();
+              const MIN_LEVEL_START_MS = 320;
+              requestAnimationFrame(() => {
                   setTimeout(() => {
                       startNewGameNow();
-                      hideLoadingOverlay();
-                  }, 30);
-              } else {
-                  startNewGameNow();
-              }
+                      const remaining = MIN_LEVEL_START_MS - (performance.now() - shownAt);
+                      setTimeout(hideLoadingOverlay, Math.max(0, remaining));
+                  }, 0);
+              });
           }
 
        function startNewGameNow() {
@@ -774,13 +1375,17 @@
               bumping = [];
               flashing = new Set();
               progressMade = false;
-              const layout = buildLayout();
+              // fast: quality tradeoff (a few more short arrows) is well
+              // worth it here - this runs synchronously behind the loading
+              // overlay, and tap-forgiveness (see handleTap) already makes
+              // short arrows easy to hit regardless.
+              const layout = buildLayout(true);
               grid = layout.grid;
               pathsMap = new Map(
                   layout.paths.map(p => [p.id, p])
               );
               levelArrowTotal = pathsMap.size;
-              hardShuffleFlags = { at20: false, at60: false };
+              shuffleCheckpointIndex = 0;
               updateShuffleWarning();
               // Grid line overlay is per-game only - start every new game
               // with it off, regardless of whether it was left on before.
@@ -791,6 +1396,7 @@
               layoutCanvas();
               saveGameState();
               hideMenu();
+              levelStartTime = performance.now();
           }
 
         document.getElementById("newBtn").onclick = () => {
@@ -808,30 +1414,40 @@
             document.getElementById("levelLabel").textContent = "LEVEL " + currentLevel;
         }
 
-        // Hard mode reshuffles the remaining arrows once 40% of the level's
-        // starting count is cleared, then again at 80% - shown here as a
-        // live "N arrows until shuffle" countdown, once it's close (3 or
-        // fewer left), so the player gets a heads-up right before the board
-        // changes without it being a constant on-screen distraction the
-        // rest of the time. Hidden outside Hard mode, and once the level's
-        // last reshuffle has already fired.
+        // Shuffle warning countdown. The actual mode-specific checkpoints
+        // are set in SHUFFLE_CHECKPOINTS_BY_MODE below. Once the next
+        // checkpoint is close (SHUFFLE_WARNING_THRESHOLD arrows or fewer
+        // left to clear), a big translucent number pops up centered over
+        // the board and fades out on its own - a quick heads-up rather
+        // than a constant on-screen distraction. The clear that actually
+        // triggers the reshuffle is handled separately by the "Arrows
+        // Shuffled!" popup at the reshuffle call site, so this function is
+        // never asked to show "1" on that final triggering clear - see the
+        // call site comment where updateShuffleWarning() is invoked.
         const SHUFFLE_WARNING_THRESHOLD = 3;
         function updateShuffleWarning(){
-            const el = document.getElementById("shuffleWarning");
-            if(gameMode !== 'hard' || levelArrowTotal <= 0 || hardShuffleFlags.at60){
-                el.style.display = 'none';
+            const el = document.getElementById("shuffleCountPopup");
+            const nextThreshold = getNextShuffleThreshold();
+            if(nextThreshold == null || levelArrowTotal <= 0){
+                el.classList.remove('show');
                 return;
             }
-            const nextThreshold = hardShuffleFlags.at20 ? 0.8 : 0.4;
             const neededCleared = Math.ceil(nextThreshold * levelArrowTotal);
             const clearedSoFar = levelArrowTotal - pathsMap.size;
             const remaining = Math.max(0, neededCleared - clearedSoFar);
-            if(remaining > SHUFFLE_WARNING_THRESHOLD){
-                el.style.display = 'none';
+            if(remaining > SHUFFLE_WARNING_THRESHOLD || remaining <= 0){
+                el.classList.remove('show');
                 return;
             }
-            el.textContent = "🔀 Shuffle in " + remaining;
-            el.style.display = 'block';
+            el.textContent = remaining;
+            // Restart the pop/fade animation every call (even for a repeat
+            // number) by removing the class, forcing a reflow, then adding
+            // it back - otherwise the browser would just no-op on an
+            // already-applied animation class and the popup wouldn't
+            // re-appear for the next countdown tick.
+            el.classList.remove('show');
+            void el.offsetWidth;
+            el.classList.add('show');
         }
 
         document.getElementById("levelBtn").onclick = () => {
@@ -857,30 +1473,52 @@
 
             let buttonsHtml = '';
             for(let lvl = 1; lvl <= maxUnlockedLevel[gameMode]; lvl++){
-                buttonsHtml += `<button class="levelSelect" data-level="${lvl}">${lvl}</button>`;
+                const best = bestTimes[getBestTimeKey(gameMode, lvl)];
+                const timeHtml = best != null
+                    ? `<span class="levelSelectTime">${formatElapsedTime(best)}</span>`
+                    : '';
+                buttonsHtml += `<button class="levelSelect" data-level="${lvl}">
+                    <span class="levelSelectNum">${lvl}</span>${timeHtml}
+                </button>`;
             }
 
+            const patternProgressHtml = getPatternProgressChipHtml(maxUnlockedLevel[gameMode]);
+
             popup.innerHTML = `
-                <div style="
+                <div id="levelPopupBox" style="
                     background:white;
-                    padding:15px;
                     border-radius:18px;
-                    width:220px;
+                    width:260px;
                     max-height:70vh;
-                    overflow-y:auto;
+                    display:flex;
+                    flex-direction:column;
                     text-align:center;
                     box-shadow:0 15px 40px rgba(0,0,0,.25);
+                    overflow:hidden;
                 ">
                     <div style="
-                        font-size:15px;
-                        font-weight:bold;
-                        color:#2c2f4a;
-                        margin-bottom:12px;
+                        padding:20px 20px 14px;
+                        flex-shrink:0;
                     ">
-                        Select Level (${gameMode.charAt(0).toUpperCase() + gameMode.slice(1)})
+                        <div style="
+                            font-size:16px;
+                            font-weight:bold;
+                            color:#2c2f4a;
+                            margin-bottom:14px;
+                        ">
+                            Select Level (${gameMode.charAt(0).toUpperCase() + gameMode.slice(1)})
+                        </div>
+                        ${patternProgressHtml}
                     </div>
-                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
-                        ${buttonsHtml}
+                    <div id="levelPopupScroll" style="
+                        overflow-y:auto;
+                        padding:0 20px 20px;
+                        flex:1;
+                        min-height:0;
+                    ">
+                        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+                            ${buttonsHtml}
+                        </div>
                     </div>
                 </div>
             `;
@@ -888,15 +1526,29 @@
             document.body.appendChild(popup);
             popup.querySelectorAll(".levelSelect").forEach(btn=>{
                 btn.style.cssText = `
-                    padding:10px 0;
-                    font-size:13px;
+                    padding:10px 0 8px;
+                    font-size:14px;
                     font-weight:bold;
                     border:none;
                     border-radius:10px;
                     background:#2c2f4a;
                     color:white;
                     cursor:pointer;
+                    display:flex;
+                    flex-direction:column;
+                    align-items:center;
+                    justify-content:center;
+                    gap:2px;
+                    line-height:1.1;
                 `;
+                const timeLabel = btn.querySelector('.levelSelectTime');
+                if(timeLabel){
+                    timeLabel.style.cssText = `
+                        font-size:10px;
+                        font-weight:normal;
+                        opacity:0.7;
+                    `;
+                }
                 btn.onclick = () => {
                     currentLevel = parseInt(btn.dataset.level, 10);
                     gameStarted = true;
@@ -907,6 +1559,19 @@
             popup.onclick = (e) => {
                 if(e.target === popup) popup.remove();
             };
+
+            // Levels are listed in ascending order (1, 2, 3...), so the
+            // newest/latest unlocked level is the last button. Auto-scroll
+            // to the bottom on open so the latest level is visible
+            // immediately instead of requiring the player to scroll down
+            // manually. Deferred a frame so layout/scrollHeight is settled.
+            // Only the inner grid scrolls now - the title/progress header
+            // stays fixed in place - so this targets that inner container
+            // rather than the outer box.
+            requestAnimationFrame(() => {
+                const scrollArea = document.getElementById("levelPopupScroll");
+                if(scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;
+            });
         };
 
        document.getElementById("modeBtn").onclick = () => {
@@ -933,18 +1598,18 @@
     popup.innerHTML = `
         <div style="
             background:white;
-            padding:15px;
+            padding:20px;
             border-radius:18px;
-            width:150px;
+            width:260px;
             text-align:center;
             box-shadow:0 15px 40px rgba(0,0,0,.25);
         ">
 
             <div style="
-                font-size:15px;
+                font-size:16px;
                 font-weight:bold;
                 color:#2c2f4a;
-                margin-bottom:12px;
+                margin-bottom:14px;
             ">
                 Select Mode
             </div>
@@ -960,9 +1625,9 @@
     popup.querySelectorAll(".modeSelect").forEach(btn=>{
         btn.style.cssText=`
             width:100%;
-            padding:10px;
-            font-size:10px;
-            margin:5px 0;
+            padding:12px;
+            font-size:14px;
+            margin:6px 0;
             font-weight:bold;
             border:none;
             border-radius:12px;
@@ -1005,20 +1670,43 @@
         `;
 
         // "Auto Select" always available (no preview swatch - it isn't one
-        // fixed pattern), then one row per unlocked pattern tier, each
-        // showing its name alongside a live sample arrow so it's obvious
-        // what you're picking. Locked patterns simply don't show yet, same
-        // approach as the level-select list only going up to
-        // maxUnlockedLevel.
+        // fixed pattern), then EVERY pattern tier is listed - unlocked ones
+        // show their live preview and are selectable as before; locked ones
+        // stay visible but greyed out with a "🔒 Unlock at Level N" label
+        // instead of a preview, so players can see what's still ahead
+        // without being able to pick it yet. TESTING_UNLOCK_ALL_PATTERNS
+        // still bypasses the lock for testing (see its definition).
+        //
+        // Auto Select's own label also shows which pattern it's currently
+        // resolving to (via getActiveArrowPatternType()), since "Auto
+        // Select" alone doesn't tell the player what's actually on the
+        // board right now.
+        const autoActivePattern = PATTERN_DISPLAY_NAMES[getActiveArrowPatternType()] || '';
         let optionsHtml = `<button class="patternSelect" data-pattern="auto">
-                <span>Auto Select</span>
+                <span>Auto Select${selectedPatternType === 'auto' ? ` <span style="font-weight:normal;opacity:0.75;font-size:12px;">(${autoActivePattern})</span>` : ''}</span>
             </button>`;
-        for(let i = 0; i < unlockedPatternTiers; i++){
+        for(let i = 0; i < ARROW_PATTERN_TYPES.length; i++){
             const type = ARROW_PATTERN_TYPES[i];
-            optionsHtml += `<button class="patternSelect" data-pattern="${type}">
-                <span>${PATTERN_DISPLAY_NAMES[type]}</span>
-                <canvas class="patternPreview" data-preview="${type}" width="120" height="46"></canvas>
-            </button>`;
+            const isUnlocked = TESTING_UNLOCK_ALL_PATTERNS || i < unlockedPatternTiers;
+            if(isUnlocked){
+                optionsHtml += `<button class="patternSelect" data-pattern="${type}">
+                    <span>${PATTERN_DISPLAY_NAMES[type]}</span>
+                    <canvas class="patternPreview" data-preview="${type}" width="120" height="46"></canvas>
+                </button>`;
+            } else {
+                const unlockLevel = i * PATTERN_CHANGE_INTERVAL;
+                // Locked rows still get the real preview swatch (dimmed +
+                // desaturated via CSS below), with a small lock badge
+                // overlaid on top - gives players a "sneak peek" of what
+                // they're working toward instead of just a bare number.
+                optionsHtml += `<button class="patternSelect" data-pattern="${type}" data-locked="true">
+                    <span>${PATTERN_DISPLAY_NAMES[type]}</span>
+                    <div class="patternPreviewWrap" style="position:relative;">
+                        <canvas class="patternPreview" data-preview="${type}" data-locked-preview="true" width="120" height="46"></canvas>
+                        <div class="patternLockOverlay">🔒 Lvl ${unlockLevel}</div>
+                    </div>
+                </button>`;
+            }
         }
 
         popup.innerHTML = `
@@ -1049,7 +1737,8 @@
 
         document.body.appendChild(popup);
         popup.querySelectorAll(".patternSelect").forEach(btn=>{
-            const isActive = btn.dataset.pattern === selectedPatternType;
+            const isLocked = btn.dataset.locked === "true";
+            const isActive = !isLocked && btn.dataset.pattern === selectedPatternType;
             btn.style.cssText=`
                 width:100%;
                 display:flex;
@@ -1061,10 +1750,49 @@
                 font-weight:bold;
                 border:${isActive ? '2px solid #6c9bd1' : '2px solid transparent'};
                 border-radius:14px;
-                background:#2c2f4a;
-                color:white;
-                cursor:pointer;
+                background:${isLocked ? '#1c1e33' : (isActive ? '#3d4570' : '#2c2f4a')};
+                color:${isLocked ? 'rgba(255,255,255,0.45)' : 'white'};
+                cursor:${isLocked ? 'default' : 'pointer'};
             `;
+            if(isLocked){
+                const overlay = btn.querySelector('.patternLockOverlay');
+                if(overlay){
+                    overlay.style.cssText = `
+                        position:absolute;
+                        inset:0;
+                        display:flex;
+                        align-items:center;
+                        justify-content:center;
+                        background:rgba(0,0,0,0.55);
+                        color:#fff;
+                        font-size:11px;
+                        font-weight:700;
+                        border-radius:6px;
+                        white-space:nowrap;
+                        pointer-events:none;
+                    `;
+                }
+            }
+            // Clear "this is the one currently in use" checkmark badge,
+            // rather than relying on the border tint alone (easy to miss,
+            // especially for players who are colorblind or on a dim
+            // screen). Inserted as the first child of the label <span> so
+            // it sits right before the pattern name.
+            if(isActive){
+                const labelSpan = btn.querySelector('span');
+                if(labelSpan){
+                    const check = document.createElement('span');
+                    check.textContent = '✓ ';
+                    check.style.color = '#8fd3ff';
+                    labelSpan.prepend(check);
+                }
+            }
+            if(isLocked){
+                // Locked rows are informational only - no selection, no
+                // navigation away from the popup on tap.
+                btn.onclick = (e) => { e.stopPropagation(); };
+                return;
+            }
             btn.onclick=()=>{
                 selectedPatternType = btn.dataset.pattern;
                 saveProgress();
@@ -1076,10 +1804,16 @@
 
         // Fill in each row's live preview swatch now that the canvases are
         // actually in the DOM (and therefore have a real 2D context).
+        // Locked previews get the real pattern drawn too (not blank), then
+        // dimmed/desaturated via CSS filter so it reads as a sneak peek
+        // rather than a fully-available option - the dark overlay + lock
+        // badge on top does the rest of the "you can't pick this yet" job.
         popup.querySelectorAll(".patternPreview").forEach(canvas=>{
+            const isLockedPreview = canvas.dataset.lockedPreview === "true";
             canvas.style.cssText = `
                 border-radius:6px;
                 background:rgba(255,255,255,0.08);
+                ${isLockedPreview ? 'filter:grayscale(75%) brightness(0.55);' : ''}
             `;
             drawPatternPreviewIcon(canvas.dataset.preview, canvas);
         });
@@ -1103,6 +1837,11 @@
 
             arrowSound.muted = soundMuted;
             levelPassSound.muted = soundMuted;
+            // errorSound (wrong-arrow touch) and gameOverSound were missing
+            // here, so they kept playing even with sound muted. All sound
+            // effects need to respect the mute toggle the same way.
+            errorSound.muted = soundMuted;
+            gameOverSound.muted = soundMuted;
 
             updateMuteButton();
         };
@@ -1487,7 +2226,7 @@ User agent: ${navigator.userAgent}`;
             if(grid[ar][ac] !== -1) continue;
             if(hypothetical.has(ar+','+ac)) continue;
             if(freeNeighborCount(ar, ac, hypothetical) === 0){
-              w *= 0.08;
+              w *= 0.03;
               break;
             }
           }
@@ -1787,8 +2526,8 @@ function buildFallbackLayout(){
     return {grid, paths, clearId: 0};
 }
 
-// fast=true trims the search budget down - used for the mid-game Hard mode
-// reshuffle, which (unlike a fresh level) runs synchronously on the main
+// fast=true trims the search budget down - used for mid-game checkpoint
+// reshuffles, which (unlike a fresh level) run synchronously on the main
 // thread in the middle of a tap, on top of an already-large Hard board.
 // The full budget could take ~1.5-2s there, freezing input long enough
 // that a player's next tap lands on the wrong (post-shuffle) arrow.
@@ -1926,17 +2665,40 @@ function buildLayout(fast){
 
     let leaving = [];
     let bumping = []; // arrows currently animating a "wrong move" bump: nudge forward until they touch whatever's blocking them, then spring back
+    // Checkpoint reshuffle transition: the old arrows spin/shrink/fade out,
+    // then the new layout spins/grows/fades in, instead of an instant cut.
+    // null when no reshuffle animation is in progress.
+    let shuffleAnim = null;
     let flashing = new Set();//ids of arrows mistouched this game - stay red until cleared
    let animFrameQueued = false;
 
-    // Hard mode only: the remaining arrows get reshuffled into a fresh
-    // layout once 40% of the level's starting arrows are cleared, and
-    // again at 80%. levelArrowTotal is the arrow count the level started
-    // with (fractions are measured against this, not the ever-shrinking
-    // current count), and the flags make sure each checkpoint only fires
-    // once per level.
+    // Mode-specific shuffle timing. Edit these numbers later if you want to
+    // tune when shuffles happen:
+    //   easy: []          means no mid-level shuffle.
+    //   medium: [0.50]   means shuffle after 50% of starting arrows clear.
+    //   hard: [0.40,0.70] means shuffle after 40%, then again after 70%.
+    // Use fractions from 0 to 1, and keep each mode's list in increasing
+    // order. Example: [0.25, 0.60, 0.85] would shuffle three times.
+    const SHUFFLE_CHECKPOINTS_BY_MODE = {
+        easy: [],
+        medium: [0.50],
+        hard: [0.40, 0.70]
+    };
+
+    // levelArrowTotal is the arrow count the level started with. Fractions
+    // are measured against this fixed total, not the ever-shrinking current
+    // count. shuffleCheckpointIndex points to the next checkpoint to fire.
     let levelArrowTotal = 0;
-    let hardShuffleFlags = { at20: false, at60: false };
+    let shuffleCheckpointIndex = 0;
+
+    function getShuffleCheckpointsForMode(mode){
+        return SHUFFLE_CHECKPOINTS_BY_MODE[mode] || [];
+    }
+
+    function getNextShuffleThreshold(){
+        const checkpoints = getShuffleCheckpointsForMode(gameMode);
+        return checkpoints[shuffleCheckpointIndex] ?? null;
+    }
 
     // Fisher-Yates using the level's seeded rng() (not Math.random()) so a
     // reshuffle is deterministic given the level's seed, same as the rest
@@ -1949,16 +2711,19 @@ function buildLayout(fast){
         return arr;
     }
 
-    // Hard mode checkpoint reshuffle: builds a brand new fully-solvable
+    // Mode checkpoint reshuffle: builds a brand new fully-solvable
     // layout for the current level's grid/step settings, then keeps only
     // as many of its arrows as are currently remaining on the board - no
     // arrows are added. A subset of a solvable layout (cleared in the same
     // relative order as the full layout) is always itself solvable, since
     // removing pieces only removes obstacles, so trimming down to the
     // remaining count can never turn a solvable board unsolvable.
-    function reshuffleRemainingArrows(){
+    function reshuffleRemainingArrows(showNotice = true){
         const remainingCount = pathsMap.size;
         if(remainingCount === 0) return;
+        const previousLengths = [...pathsMap.values()]
+            .map(p => p.cells.length)
+            .sort((a, b) => b - a);
 
         // Regenerating a layout across the WHOLE board (300+ cells on a big
         // Hard board) just to keep a random handful of its arrows afterward
@@ -2004,7 +2769,17 @@ function buildLayout(fast){
         // total arrows than we need to keep - just keep them all rather
         // than fail; this only ever gives the player fewer arrows to clear,
         // never more.
-        const kept = shuffled.slice(0, Math.min(remainingCount, shuffled.length));
+        const kept = shuffled
+            .slice(0, Math.min(remainingCount, shuffled.length))
+            .sort((a, b) => b.cells.length - a.cells.length)
+            .map((p, i) => {
+                const maxLen = previousLengths[i] || p.cells.length;
+                if(p.cells.length <= maxLen) return p;
+                // Trim from the tail so the arrow keeps the same head and
+                // exit direction; this only removes blockers, preserving
+                // the solvability guarantee from the generated layout.
+                return {...p, cells: p.cells.slice(p.cells.length - maxLen)};
+            });
 
         const newGrid = Array.from({length: ROWS}, () => Array(COLS).fill(-1));
         const newPathsMap = new Map();
@@ -2013,70 +2788,81 @@ function buildLayout(fast){
             for(const [r,c] of p.cells) newGrid[r][c] = p.id;
         }
 
-        grid = newGrid;
-        pathsMap = newPathsMap;
         // Old ids no longer necessarily correspond to anything on the new
         // board - drop any stale "wrong move" state tied to them. Arrows
         // already mid-flight in `leaving` are self-contained (they carry
         // their own points/timing) so they're left alone to finish.
+        const oldPaths = [...pathsMap.values()];
         flashing = new Set();
         bumping = [];
+
+        // Animate the transition (old arrows spin/shrink away, new ones
+        // spin/grow in) instead of an instant cut - grid/pathsMap only
+        // actually get swapped once the animation finishes, in
+        // drawShuffleAnim(). The board keeps showing (and, gameplay-wise,
+        // still IS) the old layout for the animation's duration.
+        shuffleAnim = {
+            oldPaths,
+            newGrid,
+            newPathsMap,
+            startTime: performance.now(),
+            duration: 550
+        };
 
         // buildLayout() above just ran synchronously and could have taken
         // a noticeable moment on a big Hard board - anything the player
         // tapped during that freeze is still sitting in the event queue
         // and would otherwise fire against this brand-new layout the
         // instant this function returns. Swallow taps for a short window
-        // so a stray queued touch can't cost a life on an arrow that
+        // (covering both that queued-event risk and the shuffle animation
+        // itself) so a stray touch can't cost a life on an arrow that
         // wasn't there when they actually tapped.
-        inputBlockedUntil = performance.now() + 400;
+        inputBlockedUntil = performance.now() + shuffleAnim.duration + 400;
 
-        // Deferred rather than shown immediately: this whole function runs
-        // synchronously inside the pointerup handler, and on real touch
-        // devices the browser fires a compatibility "click" event shortly
-        // after pointerup/touchend at the same screen coordinates. If the
-        // popup were created right here, that trailing click would land on
-        // the brand-new overlay and instantly dismiss it - so it would
-        // never actually be visible, even though the reshuffle itself
-        // still happened. Waiting a couple of frames lets that synthetic
-        // click resolve first (same reason the "Level Pass" popup, which
-        // waits on the leaving animation via requestAnimationFrame, never
-        // has this problem).
-        setTimeout(() => {
-            showPopup(
-                "Arrows Shuffled!",
-                "The remaining arrows have been rearranged",
-                null,
-                false, // no confetti - this is a warning, not a celebration
-                1800   // auto-dismiss so it never blocks play
-            );
-        }, 300);
+        // Show this shortly after the reshuffle starts. The just-cleared
+        // arrow keeps animating on top of the shuffle in draw(), so the
+        // notice can appear quickly while the arrow still flies away behind
+        // it.
+        if(showNotice){
+            setTimeout(() => {
+                showPopup(
+                    "Arrows Shuffled!",
+                    "",
+                    null,
+                    false, // no confetti - this is a warning, not a celebration
+                    500    // auto-dismiss quickly so it never blocks play
+                );
+            }, 60);
+        }
 
         requestDraw();
-        saveGameState();
+        // saveGameState() intentionally NOT called here - grid/pathsMap
+        // still hold the OLD layout until the animation finishes and
+        // drawShuffleAnim() finalizes the swap, so saving now would
+        // persist a layout that's about to disappear. See drawShuffleAnim.
     }
 
-    // Checked once after every successful arrow clear. Hard mode only.
+    // Checked once after every successful arrow clear.
     // Fractions are measured against levelArrowTotal (the level's starting
-    // count), not the shrinking current count, so "40%" and "80%" always
-    // refer to the same fixed target. If a single clear jumps straight
-    // past both checkpoints (possible on a very short level) both flags
-    // get marked and only one reshuffle fires.
-    function maybeReshuffleHardMode(){
-        if(gameMode !== 'hard') return;
+    // count), not the shrinking current count, so checkpoint percentages
+    // always refer to the same fixed target. If a single clear jumps past
+    // multiple checkpoints on a very short level, mark all passed
+    // checkpoints but only reshuffle once.
+    function maybeReshuffleForMode(showNotice = true){
         if(pathsMap.size === 0) return; // level just completed
         if(levelArrowTotal <= 0) return;
 
-        const clearedFraction = (levelArrowTotal - pathsMap.size) / levelArrowTotal;
+        const checkpoints = getShuffleCheckpointsForMode(gameMode);
+        if(shuffleCheckpointIndex >= checkpoints.length) return;
 
-        if(!hardShuffleFlags.at60 && clearedFraction >= 0.8){
-            hardShuffleFlags.at20 = true;
-            hardShuffleFlags.at60 = true;
-            reshuffleRemainingArrows();
-        } else if(!hardShuffleFlags.at20 && clearedFraction >= 0.4){
-            hardShuffleFlags.at20 = true;
-            reshuffleRemainingArrows();
+        const clearedFraction = (levelArrowTotal - pathsMap.size) / levelArrowTotal;
+        if(clearedFraction < checkpoints[shuffleCheckpointIndex]) return;
+
+        while(shuffleCheckpointIndex < checkpoints.length &&
+              clearedFraction >= checkpoints[shuffleCheckpointIndex]){
+            shuffleCheckpointIndex++;
         }
+        reshuffleRemainingArrows(showNotice);
     }
 
   const SPEED = 1.24;             // px per ms travelled along the path while exiting (2x speed)
@@ -2153,30 +2939,99 @@ function buildLayout(fast){
   }
 
   // ---- Level-based arrow fill patterns ----
-  // Normal (non-flashing, non-leaving) arrows are drawn with a repeating
+  // Normal arrows are drawn with a repeating
   // canvas pattern instead of a flat color, and which pattern is used
-  // depends on currentLevel. Red (wrong-move) and blue (clearing) arrows
-  // always stay flat colors - patterns only decorate the "at rest" state
-  // so gameplay feedback colors stay instantly readable.
+  // depends on currentLevel. Red wrong-move arrows always stay flat red.
+  // Clearing arrows stay patterned when a pattern is active, and only use
+  // blue for the default solid-arrow look.
   //
   // Each texture below has its own hardcoded palette (rather than just a
   // lightened PIPE_COLOR) so the board's whole color mood shifts with the
   // pattern, not just the pattern's shape.
-  const PATTERN_CHANGE_INTERVAL = 5; // levels per pattern before cycling to the next
-  const ARROW_PATTERN_TYPES = ['solid','contourLines','marbleSwirl','sunsetWave','crimsonBlob','goldenTopo','denimWeave'];
+  // ===== PATTERN UNLOCK CONFIG =====
+  // How many levels (per mode) the player must clear before the next arrow
+  // pattern unlocks. Change this ONE number to retune unlock pacing -
+  // everything else (cycling display, unlock popup, unlockedPatternTiers
+  // math) derives from it automatically. e.g. 5 = fast (a new pattern every
+  // 5 levels), 15 = a new pattern every 15 levels, etc.
+  const PATTERN_CHANGE_INTERVAL = 10; // levels per pattern before cycling to the next
+
+  // TESTING ONLY: when true, every pattern is treated as already unlocked
+  // regardless of level progress, so all of them show up (unlocked) in the
+  // Pattern menu immediately. Set back to false before shipping/release -
+  // this bypasses real unlock progress entirely and is only meant for
+  // trying out how each pattern looks without grinding levels.
+  const TESTING_UNLOCK_ALL_PATTERNS = false;   //arrow pattern on off
+
+  // ===== HOW TO ADD A NEW ARROW PATTERN (checklist for future changes) =====
+  // Adding a pattern takes 4 edits, all in this file:
+  //   1. Add its type key (short camelCase string) to ARROW_PATTERN_TYPES
+  //      below. Position in the array = unlock order (earlier = unlocks
+  //      sooner), so insert it wherever you want it to unlock relative to
+  //      the others.
+  //   2. Add a `type: 'Display Name'` entry to PATTERN_DISPLAY_NAMES -
+  //      shown in the Pattern menu and unlock popup.
+  //   3. Add a `case 'type':` block inside buildPatternTile() (search for
+  //      "case 'coralReef'" below to jump to the end of the switch) that
+  //      draws the tile texture using the local `tctx`/`s` canvas context.
+  //      Keep it self-contained (fillRect background + a few strokes/fills)
+  //      like the existing cases - no external images/assets.
+  //   4. Add a matching entry to PATTERN_TILE_SCALE (how large one repeat
+  //      tile is relative to a cell - bigger scale = fewer repeats visible,
+  //      good for detailed/organic patterns) AND to getPatternBaseColor()
+  //      (the flat representative color used for the solid arrow-head cap -
+  //      see the "How to add a new arrow pattern" note above that function
+  //      for its own darkness-contrast requirement).
+  // That's it - unlock progression, the cycling-by-level system, the
+  // Pattern menu list, and swatch previews all read from these same
+  // structures automatically, so nothing else needs to change.
+  const ARROW_PATTERN_TYPES = ['solid','plainRed','plainBlue','plainGreen','plainOrange','plainPurple','contourLines','marbleSwirl','sunsetWave','crimsonBlob','goldenTopo','denimWeave','lavaCrack','mintDots','royalChevron','iceCrystal','copperRust','jungleLeaf','cosmicStar','candyStripe','graphitePlaid','coralReef','emeraldScale','sunflowerField','stormCloud','autumnLeaf','neonGrid','desertSand','wineBerry','arcticAurora','terracottaTile'];
   const PATTERN_DISPLAY_NAMES = {
     solid: 'Solid',
+    plainRed: 'Red',
+    plainBlue: 'Blue',
+    plainGreen: 'Green',
+    plainOrange: 'Orange',
+    plainPurple: 'Purple',
     contourLines: 'Forest',
     marbleSwirl: 'Ocean',
     sunsetWave: 'Sunset',
     crimsonBlob: 'Berry',
     goldenTopo: 'Gold',
-    denimWeave: 'Denim'
+    denimWeave: 'Denim',
+    lavaCrack: 'Lava',
+    mintDots: 'Mint',
+    royalChevron: 'Royal',
+    iceCrystal: 'Ice',
+    copperRust: 'Copper',
+    jungleLeaf: 'Jungle',
+    cosmicStar: 'Cosmic',
+    candyStripe: 'Candy',
+    graphitePlaid: 'Plaid',
+    coralReef: 'Coral',
+    emeraldScale: 'Emerald',
+    sunflowerField: 'Sunflower',
+    stormCloud: 'Storm',
+    autumnLeaf: 'Autumn',
+    neonGrid: 'Neon',
+    desertSand: 'Desert',
+    wineBerry: 'Wine',
+    arcticAurora: 'Aurora',
+    terracottaTile: 'Terracotta'
   };
   const patternCache = new Map(); // key: `${type}_${tileSizeRounded}` -> CanvasPattern
 
   function lightenColor(hex, amt){ return lerpColor(hex, '#ffffff', amt); }
   function darkenColor(hex, amt){ return lerpColor(hex, '#000000', amt); }
+
+  // Perceived brightness (0=black..255=white) of a hex color, used to decide
+  // how hard a color needs to be darkened to stay clearly visible against
+  // the light board background.
+  function relativeLuminance(hex){
+    const n = parseInt(hex.slice(1), 16);
+    const r = (n>>16)&255, g = (n>>8)&255, b = n&255;
+    return 0.2126*r + 0.7152*g + 0.0722*b;
+  }
 
   function buildPatternTile(type, tileSize){
     const tile = document.createElement('canvas');
@@ -2318,6 +3173,409 @@ function buildLayout(fast){
         break;
       }
 
+      // Volcanic near-black base with jagged glowing orange/red lava cracks.
+      case 'lavaCrack': {
+        tctx.fillStyle = '#181410';
+        tctx.fillRect(0,0,s,s);
+        const cracks = [
+          { c: '#ff6a1f', w: 0.10, pts: [[-0.1,0.15],[0.25,0.35],[0.15,0.6],[0.5,0.55],[0.4,0.85],[1.2,0.75]] },
+          { c: '#ffb23f', w: 0.05, pts: [[-0.15,0.7],[0.3,0.5],[0.2,0.2],[0.6,0.25],[0.55,-0.1]] },
+        ];
+        for(const crack of cracks){
+          tctx.strokeStyle = crack.c;
+          tctx.lineWidth = s*crack.w;
+          tctx.lineCap = 'round';
+          tctx.lineJoin = 'round';
+          tctx.beginPath();
+          crack.pts.forEach(([x,y],i) => {
+            const px = x*s, py = y*s;
+            if(i===0) tctx.moveTo(px,py); else tctx.lineTo(px,py);
+          });
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Deep mint-green base with a scattered grid of pale mint polka dots.
+      case 'mintDots': {
+        tctx.fillStyle = '#276b57';
+        tctx.fillRect(0,0,s,s);
+        tctx.fillStyle = '#bdf5e0';
+        const dotPositions = [[0.22,0.22],[0.78,0.22],[0.5,0.5],[0.22,0.78],[0.78,0.78]];
+        for(const [dx,dy] of dotPositions){
+          tctx.beginPath();
+          tctx.arc(dx*s, dy*s, s*0.13, 0, Math.PI*2);
+          tctx.fill();
+        }
+        break;
+      }
+
+      // Deep royal-purple base with gold zigzag chevron stripes.
+      case 'royalChevron': {
+        tctx.fillStyle = '#33205c';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = '#e2bd52';
+        tctx.lineWidth = s*0.12;
+        tctx.lineCap = 'round';
+        tctx.lineJoin = 'round';
+        const rows = [0.15, 0.5, 0.85];
+        for(const ry of rows){
+          tctx.beginPath();
+          tctx.moveTo(-s*0.1, ry*s - s*0.12);
+          tctx.lineTo(s*0.5, ry*s + s*0.12);
+          tctx.lineTo(s*1.1, ry*s - s*0.12);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Pale icy-blue base with faceted crystalline outline shapes.
+      case 'iceCrystal': {
+        tctx.fillStyle = '#cdeffb';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = '#79c9e6';
+        tctx.lineWidth = Math.max(1, s*0.045);
+        const facets = [
+          [[0.1,0.1],[0.5,0.35],[0.15,0.55]],
+          [[0.5,0.35],[0.9,0.15],[0.85,0.55]],
+          [[0.15,0.55],[0.5,0.35],[0.85,0.55],[0.5,0.9]],
+        ];
+        for(const facet of facets){
+          tctx.beginPath();
+          facet.forEach(([x,y],i)=>{
+            const px=x*s, py=y*s;
+            if(i===0) tctx.moveTo(px,py); else tctx.lineTo(px,py);
+          });
+          tctx.closePath();
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Copper-brown base flecked with darker rust and lighter highlight speckles.
+      case 'copperRust': {
+        tctx.fillStyle = '#7d4a2a';
+        tctx.fillRect(0,0,s,s);
+        const speckles = [
+          [0.2,0.25,0.09,'#4a2712'], [0.65,0.2,0.07,'#c98a54'],
+          [0.4,0.55,0.1,'#c98a54'], [0.8,0.6,0.08,'#4a2712'],
+          [0.15,0.8,0.07,'#4a2712'], [0.55,0.85,0.09,'#c98a54'],
+        ];
+        for(const [dx,dy,r,c] of speckles){
+          tctx.fillStyle = c;
+          tctx.beginPath();
+          tctx.arc(dx*s, dy*s, r*s, 0, Math.PI*2);
+          tctx.fill();
+        }
+        break;
+      }
+
+      // Deep jungle-green base with a central leaf vein and branching side veins.
+      case 'jungleLeaf': {
+        tctx.fillStyle = '#1f4d2b';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = '#7fce7a';
+        tctx.lineCap = 'round';
+        tctx.lineWidth = s*0.06;
+        tctx.beginPath();
+        tctx.moveTo(s*0.5, -s*0.1);
+        tctx.lineTo(s*0.5, s*1.1);
+        tctx.stroke();
+        tctx.lineWidth = s*0.035;
+        const sides = [0.15, 0.4, 0.65, 0.9];
+        for(const sy of sides){
+          tctx.beginPath();
+          tctx.moveTo(s*0.5, s*sy);
+          tctx.lineTo(s*0.15, s*sy - s*0.12);
+          tctx.stroke();
+          tctx.beginPath();
+          tctx.moveTo(s*0.5, s*sy);
+          tctx.lineTo(s*0.85, s*sy - s*0.12);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Deep navy/black base scattered with small pale-blue stars.
+      case 'cosmicStar': {
+        tctx.fillStyle = '#0c1030';
+        tctx.fillRect(0,0,s,s);
+        tctx.fillStyle = '#dfe6ff';
+        const stars = [[0.2,0.25,0.05],[0.7,0.15,0.035],[0.85,0.6,0.05],[0.35,0.7,0.04],[0.55,0.45,0.06],[0.1,0.85,0.035]];
+        for(const [dx,dy,r] of stars){
+          tctx.beginPath();
+          tctx.arc(dx*s, dy*s, r*s, 0, Math.PI*2);
+          tctx.fill();
+        }
+        break;
+      }
+
+      // Pale pink base with diagonal candy-cane stripes.
+      case 'candyStripe': {
+        tctx.fillStyle = '#fef1f5';
+        tctx.fillRect(0,0,s,s);
+        const stripes = [
+          { c: '#ff6fa5', off: 0.1 },
+          { c: '#ffb6d0', off: 0.4 },
+          { c: '#ff6fa5', off: 0.7 },
+        ];
+        for(const st of stripes){
+          tctx.strokeStyle = st.c;
+          tctx.lineWidth = s*0.22;
+          tctx.lineCap = 'round';
+          const o = s*st.off;
+          tctx.beginPath();
+          tctx.moveTo(-s*0.3+o, s*1.3);
+          tctx.lineTo(s*1.3+o, -s*0.3);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Charcoal-grey base with a lighter-grey crosshatch plaid overlay.
+      case 'graphitePlaid': {
+        tctx.fillStyle = '#494952';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = 'rgba(200,200,210,0.5)';
+        tctx.lineWidth = s*0.08;
+        const lines = [0.25, 0.75];
+        for(const l of lines){
+          tctx.beginPath();
+          tctx.moveTo(l*s, 0);
+          tctx.lineTo(l*s, s);
+          tctx.stroke();
+          tctx.beginPath();
+          tctx.moveTo(0, l*s);
+          tctx.lineTo(s, l*s);
+          tctx.stroke();
+        }
+        tctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        tctx.lineWidth = Math.max(1,s*0.02);
+        tctx.beginPath();
+        tctx.moveTo(0, s*0.5); tctx.lineTo(s, s*0.5);
+        tctx.moveTo(s*0.5, 0); tctx.lineTo(s*0.5, s);
+        tctx.stroke();
+        break;
+      }
+
+      // Teal reef base with branching coral-orange growths.
+      case 'coralReef': {
+        tctx.fillStyle = '#0d5c66';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = '#ff8a65';
+        tctx.lineCap = 'round';
+        const branch = (x,y,angle,len,depth) => {
+          if(depth<=0) return;
+          const x2 = x + Math.cos(angle)*len;
+          const y2 = y + Math.sin(angle)*len;
+          tctx.beginPath();
+          tctx.moveTo(x,y);
+          tctx.lineTo(x2,y2);
+          tctx.stroke();
+          branch(x2,y2, angle-0.5, len*0.7, depth-1);
+          branch(x2,y2, angle+0.5, len*0.7, depth-1);
+        };
+        tctx.lineWidth = s*0.09;
+        branch(s*0.2, s*1.05, -Math.PI/2.2, s*0.35, 3);
+        tctx.lineWidth = s*0.07;
+        branch(s*0.75, s*1.1, -Math.PI/1.8, s*0.3, 3);
+        break;
+      }
+
+      // Deep emerald base with lighter scalloped dragon-scale arcs.
+      case 'emeraldScale': {
+        tctx.fillStyle = '#0b3d2e';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = '#2f8a6b';
+        tctx.lineWidth = Math.max(1, s*0.05);
+        const rows = [0.15, 0.5, 0.85];
+        const cols = [0.15, 0.5, 0.85];
+        for(const ry of rows){
+          for(const cx of cols){
+            tctx.beginPath();
+            tctx.arc(cx*s, ry*s, s*0.18, Math.PI, 0);
+            tctx.stroke();
+          }
+        }
+        break;
+      }
+
+      // Bright sunflower-gold base with a dark center and radiating petal lines.
+      case 'sunflowerField': {
+        tctx.fillStyle = '#e8b400';
+        tctx.fillRect(0,0,s,s);
+        tctx.fillStyle = '#5c3a12';
+        tctx.beginPath();
+        tctx.arc(s*0.5, s*0.5, s*0.14, 0, Math.PI*2);
+        tctx.fill();
+        tctx.strokeStyle = '#b9790a';
+        tctx.lineWidth = s*0.05;
+        tctx.lineCap = 'round';
+        const petals = 8;
+        for(let i=0;i<petals;i++){
+          const a = (i/petals)*Math.PI*2;
+          tctx.beginPath();
+          tctx.moveTo(s*0.5 + Math.cos(a)*s*0.18, s*0.5 + Math.sin(a)*s*0.18);
+          tctx.lineTo(s*0.5 + Math.cos(a)*s*0.42, s*0.5 + Math.sin(a)*s*0.42);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Storm-grey base with a single bright yellow lightning bolt.
+      case 'stormCloud': {
+        tctx.fillStyle = '#3c4657';
+        tctx.fillRect(0,0,s,s);
+        tctx.fillStyle = '#ffe066';
+        tctx.beginPath();
+        tctx.moveTo(s*0.55, -s*0.05);
+        tctx.lineTo(s*0.3, s*0.5);
+        tctx.lineTo(s*0.5, s*0.5);
+        tctx.lineTo(s*0.35, s*1.05);
+        tctx.lineTo(s*0.75, s*0.42);
+        tctx.lineTo(s*0.52, s*0.42);
+        tctx.closePath();
+        tctx.fill();
+        break;
+      }
+
+      // Warm brown base scattered with tilted autumn-orange leaf blobs.
+      case 'autumnLeaf': {
+        tctx.fillStyle = '#7a3b1e';
+        tctx.fillRect(0,0,s,s);
+        tctx.fillStyle = '#d97a3d';
+        const leaves = [[0.25,0.3,0.5],[0.7,0.25,0.4],[0.5,0.65,0.55],[0.8,0.75,0.35]];
+        for(const [dx,dy,rot] of leaves){
+          tctx.save();
+          tctx.translate(dx*s, dy*s);
+          tctx.rotate(rot);
+          tctx.beginPath();
+          tctx.ellipse(0,0, s*0.14, s*0.08, 0, 0, Math.PI*2);
+          tctx.fill();
+          tctx.restore();
+        }
+        break;
+      }
+
+      // Near-black base with cyberpunk cyan/magenta neon grid lines.
+      case 'neonGrid': {
+        tctx.fillStyle = '#0a0a12';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = '#22e6ff';
+        tctx.lineWidth = s*0.035;
+        const gridLines = [0.33, 0.66];
+        for(const l of gridLines){
+          tctx.beginPath();
+          tctx.moveTo(l*s, 0); tctx.lineTo(l*s, s);
+          tctx.stroke();
+        }
+        tctx.strokeStyle = '#ff2fd0';
+        for(const l of gridLines){
+          tctx.beginPath();
+          tctx.moveTo(0, l*s); tctx.lineTo(s, l*s);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Sandy-tan base with darker rolling dune-wave curves.
+      case 'desertSand': {
+        tctx.fillStyle = '#d8b579';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = '#b8905a';
+        tctx.lineWidth = s*0.06;
+        tctx.lineCap = 'round';
+        const waves = [0.35, 0.65, 0.9];
+        for(const wy of waves){
+          tctx.beginPath();
+          tctx.moveTo(-s*0.1, wy*s);
+          tctx.quadraticCurveTo(s*0.5, wy*s - s*0.15, s*1.1, wy*s);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Deep wine-maroon base with a cluster of grape-like dots.
+      case 'wineBerry': {
+        tctx.fillStyle = '#4a1030';
+        tctx.fillRect(0,0,s,s);
+        tctx.fillStyle = '#8a2f5c';
+        const grapes = [[0.35,0.3,0.11],[0.55,0.3,0.11],[0.45,0.48,0.11],[0.65,0.48,0.11],[0.35,0.65,0.11],[0.55,0.65,0.11],[0.45,0.82,0.1]];
+        for(const [dx,dy,r] of grapes){
+          tctx.beginPath();
+          tctx.arc(dx*s, dy*s, r*s, 0, Math.PI*2);
+          tctx.fill();
+        }
+        break;
+      }
+
+      // Dark navy base with wavy green/purple aurora-borealis bands.
+      case 'arcticAurora': {
+        tctx.fillStyle = '#081c2e';
+        tctx.fillRect(0,0,s,s);
+        const bands = [
+          { c: 'rgba(70,230,160,0.65)', y: 0.3 },
+          { c: 'rgba(160,90,230,0.55)', y: 0.55 },
+          { c: 'rgba(70,230,160,0.4)', y: 0.78 },
+        ];
+        for(const b of bands){
+          tctx.strokeStyle = b.c;
+          tctx.lineWidth = s*0.12;
+          tctx.lineCap = 'round';
+          tctx.beginPath();
+          tctx.moveTo(-s*0.1, b.y*s);
+          tctx.quadraticCurveTo(s*0.5, b.y*s - s*0.2, s*1.1, b.y*s + s*0.05);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Burnt-orange terracotta base with a darker grid of tile lines.
+      case 'terracottaTile': {
+        tctx.fillStyle = '#b5502a';
+        tctx.fillRect(0,0,s,s);
+        tctx.strokeStyle = '#7a331a';
+        tctx.lineWidth = s*0.06;
+        const lines = [0.33, 0.66];
+        for(const l of lines){
+          tctx.beginPath();
+          tctx.moveTo(l*s, 0); tctx.lineTo(l*s, s);
+          tctx.stroke();
+          tctx.beginPath();
+          tctx.moveTo(0, l*s); tctx.lineTo(s, l*s);
+          tctx.stroke();
+        }
+        break;
+      }
+
+      // Five plain flat colors, same simple fill as 'solid' just with
+      // different hues - sit right after Solid/black in the unlock order,
+      // before the multicolour/textured patterns begin.
+      case 'plainRed':
+        tctx.fillStyle = '#d9463f';
+        tctx.fillRect(0,0,s,s);
+        break;
+
+      case 'plainBlue':
+        tctx.fillStyle = '#3971e0';
+        tctx.fillRect(0,0,s,s);
+        break;
+
+      case 'plainGreen':
+        tctx.fillStyle = '#2e9e5b';
+        tctx.fillRect(0,0,s,s);
+        break;
+
+      case 'plainOrange':
+        tctx.fillStyle = '#e08a2e';
+        tctx.fillRect(0,0,s,s);
+        break;
+
+      case 'plainPurple':
+        tctx.fillStyle = '#7c4fc4';
+        tctx.fillRect(0,0,s,s);
+        break;
+
       case 'solid':
       default:
         tctx.fillStyle = PIPE_COLOR;
@@ -2348,6 +3606,47 @@ function buildLayout(fast){
     return Math.floor((level - 1) / PATTERN_CHANGE_INTERVAL) + 1;
   }
 
+  // Shared "how close to the next pattern" calculation, used both by the
+  // Level Select progress chip and the evening reminder notification.
+  // Returns null once every pattern is unlocked (nothing left to show).
+  function getPatternProgressInfo(level){
+    if(unlockedPatternTiers >= ARROW_PATTERN_TYPES.length) return null;
+
+    const tierCount = getRawPatternTierCount(level);
+    const nextTierStartLevel = tierCount * PATTERN_CHANGE_INTERVAL + 1;
+    const remaining = Math.max(1, nextTierStartLevel - level);
+    const nextType = ARROW_PATTERN_TYPES[Math.min(tierCount, ARROW_PATTERN_TYPES.length - 1)];
+    const nextName = PATTERN_DISPLAY_NAMES[nextType] || 'a new pattern';
+    const progressInBlock = PATTERN_CHANGE_INTERVAL - remaining;
+    const percent = Math.max(0, Math.min(100, Math.round((progressInBlock / PATTERN_CHANGE_INTERVAL) * 100)));
+
+    return { remaining, nextName, percent };
+  }
+
+  // Small progress bar + "N levels to unlock X" line for the Level Select
+  // popup - shown for whichever mode the player currently has open, so it
+  // reflects that mode's own progress rather than their best mode overall.
+  function getPatternProgressChipHtml(level){
+    const info = getPatternProgressInfo(level);
+    if(!info){
+        return `<div style="
+            font-size:12px; font-weight:bold; color:#2e9e5b;
+            margin-bottom:14px; text-align:center;
+        ">🎉 All patterns unlocked!</div>`;
+    }
+
+    const label = info.remaining === 1
+        ? `1 level to unlock <b>${info.nextName}</b>!`
+        : `${info.remaining} levels to unlock <b>${info.nextName}</b>`;
+
+    return `<div style="margin-bottom:14px; text-align:left;">
+        <div style="font-size:12px; color:#666; margin-bottom:5px;">${label}</div>
+        <div style="background:#eef0fb; border-radius:6px; height:8px; overflow:hidden;">
+            <div style="background:#4d63ff; height:100%; width:${info.percent}%; border-radius:6px;"></div>
+        </div>
+    </div>`;
+  }
+
   // Brings unlockedPatternTiers up to date with maxUnlockedLevel across all
   // three modes. Only ever raises it, never lowers - so a save file from
   // before this feature existed (or someone who's already cleared plenty
@@ -2368,12 +3667,36 @@ function buildLayout(fast){
   // fraction of cellSize.
   const PATTERN_TILE_SCALE = {
     solid: 0.16,
+    plainRed: 0.16,
+    plainBlue: 0.16,
+    plainGreen: 0.16,
+    plainOrange: 0.16,
+    plainPurple: 0.16,
     contourLines: 0.6,
     marbleSwirl: 0.6,
     sunsetWave: 0.34,
     crimsonBlob: 0.5,
     goldenTopo: 0.45,
     denimWeave: 0.32,
+    lavaCrack: 0.5,
+    mintDots: 0.35,
+    royalChevron: 0.34,
+    iceCrystal: 0.4,
+    copperRust: 0.4,
+    jungleLeaf: 0.55,
+    cosmicStar: 0.4,
+    candyStripe: 0.3,
+    graphitePlaid: 0.32,
+    coralReef: 0.55,
+    emeraldScale: 0.45,
+    sunflowerField: 0.55,
+    stormCloud: 0.4,
+    autumnLeaf: 0.5,
+    neonGrid: 0.33,
+    desertSand: 0.4,
+    wineBerry: 0.45,
+    arcticAurora: 0.5,
+    terracottaTile: 0.32,
   };
 
   // Returns a fillStyle/strokeStyle-compatible value (flat color string or
@@ -2381,9 +3704,7 @@ function buildLayout(fast){
   // level. Cached per (pattern type, tile size) pair so it's cheap to call
   // every frame.
   function getArrowFillStyle(){
-    const type = (selectedPatternType !== 'auto' && ARROW_PATTERN_TYPES.includes(selectedPatternType))
-      ? selectedPatternType
-      : ARROW_PATTERN_TYPES[getPatternTierIndex(currentLevel)];
+    const type = getActiveArrowPatternType();
     if(type === 'solid') return PIPE_COLOR;
 
     const scale = PATTERN_TILE_SCALE[type] || 0.3;
@@ -2396,6 +3717,80 @@ function buildLayout(fast){
       patternCache.set(key, pattern);
     }
     return pattern;
+  }
+
+  function getActiveArrowPatternType(){
+    return (selectedPatternType !== 'auto' && ARROW_PATTERN_TYPES.includes(selectedPatternType))
+      ? selectedPatternType
+      : ARROW_PATTERN_TYPES[getPatternTierIndex(currentLevel)];
+  }
+
+  // Representative flat/base color for each pattern type. Used to produce
+  // a solid, darker arrow-head color that contrasts with the patterned shaft.
+  // NOTE for future patterns: this color can be light or dark - it does NOT
+  // need to be pre-darkened by hand. getArrowHeadSolidColorForType() below
+  // automatically darkens it by an amount that scales with how light it is
+  // (see its own comment), guaranteeing the final head color is always
+  // clearly visible against the light board background. Just pick whatever
+  // base color best represents the pattern's dominant/background shade.
+  function getPatternBaseColor(type){
+    switch(type){
+      case 'plainRed':     return '#d9463f';
+      case 'plainBlue':    return '#3971e0';
+      case 'plainGreen':   return '#2e9e5b';
+      case 'plainOrange':  return '#e08a2e';
+      case 'plainPurple':  return '#7c4fc4';
+      case 'contourLines': return '#0d3b2e';
+      case 'marbleSwirl':  return '#123c63';
+      case 'sunsetWave':   return '#1c2b3a';
+      case 'crimsonBlob':  return '#8f1330';
+      case 'goldenTopo':   return '#f2b93d';
+      case 'denimWeave':   return '#3a5f7d';
+      case 'lavaCrack':    return '#181410';
+      case 'mintDots':     return '#276b57';
+      case 'royalChevron': return '#33205c';
+      case 'iceCrystal':   return '#cdeffb';
+      case 'copperRust':   return '#7d4a2a';
+      case 'jungleLeaf':   return '#1f4d2b';
+      case 'cosmicStar':   return '#0c1030';
+      case 'candyStripe':  return '#fef1f5';
+      case 'graphitePlaid':return '#494952';
+      case 'coralReef':    return '#0d5c66';
+      case 'emeraldScale': return '#0b3d2e';
+      case 'sunflowerField': return '#e8b400';
+      case 'stormCloud':   return '#3c4657';
+      case 'autumnLeaf':   return '#7a3b1e';
+      case 'neonGrid':     return '#0a0a12';
+      case 'desertSand':   return '#d8b579';
+      case 'wineBerry':    return '#4a1030';
+      case 'arcticAurora': return '#081c2e';
+      case 'terracottaTile': return '#b5502a';
+      case 'solid':
+      default: return PIPE_COLOR;
+    }
+  }
+
+  function getArrowHeadSolidColorForType(type){
+    // Darken the base so the head reads as a solid, clearly-visible dark
+    // cap against the board (--board-bg is a light grey, #dedde6) - not
+    // just relative to the patterned shaft. A flat, small darken amount
+    // works fine for already-dark bases (e.g. Lava, Cosmic) but leaves
+    // pale bases (e.g. Ice, Candy, Gold) still too light to read clearly
+    // against a light board, so the darken amount scales up the lighter
+    // the base color is, guaranteeing every pattern's head color ends up
+    // a clearly dark, clearly visible shade.
+    const base = getPatternBaseColor(type);
+    const lum = relativeLuminance(base);
+    let amt;
+    if(lum > 200) amt = 0.62;      // very light bases (Ice, Candy) - darken hard
+    else if(lum > 150) amt = 0.45; // light/medium bases (Gold)
+    else if(lum > 90)  amt = 0.28; // mid-tone bases
+    else amt = 0.16;               // already-dark bases - just a touch darker
+    return darkenColor(base, amt);
+  }
+
+  function getLeavingArrowFillStyle(){
+    return getActiveArrowPatternType() === 'solid' ? BLUE : getArrowFillStyle();
   }
 
   // Draws a small sample arrow (shaft + head, same proportions/style as the
@@ -2445,7 +3840,10 @@ function buildLayout(fast){
     pctx.lineTo(baseX, midY);
     pctx.stroke();
 
-    pctx.fillStyle = fillStyle;
+    // Fill the head with a solid, slightly darker color derived from
+    // the pattern type so the tip reads clearly against the patterned shaft.
+    const headSolid = getArrowHeadSolidColorForType(type);
+    pctx.fillStyle = headSolid;
     pctx.beginPath();
     pctx.moveTo(tipX, midY);
     pctx.lineTo(baseX, midY - headW/2);
@@ -2498,7 +3896,14 @@ function buildLayout(fast){
     ctx.lineTo(baseX+perpX, baseY+perpY);
     ctx.lineTo(baseX-perpX, baseY-perpY);
     ctx.closePath();
-    ctx.fillStyle = color;
+    // Use a solid, slightly darker head color derived from the current
+    // arrow pattern so the tip appears as a solid cap regardless of the
+    // patterned shaft used for the body. Exception: a wrong-move/flashing
+    // arrow passes RED as its shaft color, and the head must match it
+    // exactly (fully red arrow) rather than falling back to the
+    // pattern-derived tint, regardless of which pattern is selected.
+    const headFill = (color === RED) ? RED : getArrowHeadSolidColorForType(getActiveArrowPatternType());
+    ctx.fillStyle = headFill;
     ctx.fill();
   }
 
@@ -2543,6 +3948,7 @@ function buildLayout(fast){
   }
 
   function easeInCubic(t){ return t*t*t; }
+  function easeOutCubic(t){ return 1 - Math.pow(1 - t, 3); }
 
   // true if nothing else currently occupies the cells straight ahead of this
   // arrow's head, all the way to the edge of the board
@@ -2584,21 +3990,26 @@ function buildLayout(fast){
     drawDotGrid();
     if(showGrid) drawFullGrid();
 
-    const bumpingIds = new Set(bumping.map(item => item.id));
-    const restFillStyle = getArrowFillStyle();
-    pathsMap.forEach(p => {
-      if(bumpingIds.has(p.id)) return; // drawn by the bump animation below instead
-      const color = flashing.has(p.id) ? RED : restFillStyle;
-      drawPathShape(p, color);
-    });
+    if(shuffleAnim){
+      drawShuffleAnim(now);
+    } else {
+      const bumpingIds = new Set(bumping.map(item => item.id));
+      const restFillStyle = getArrowFillStyle();
+      pathsMap.forEach(p => {
+        if(bumpingIds.has(p.id)) return; // drawn by the bump animation below instead
+        const color = flashing.has(p.id) ? RED : restFillStyle;
+        drawPathShape(p, color);
+      });
+    }
 
     leaving = leaving.filter(item => {
       const elapsed = now - item.startTime;
       const t = Math.min(1, elapsed / item.duration);
-      const shift = item.total_extra_travel * easeInCubic(t);
+      const shiftProgress = item.fastStart ? easeOutCubic(t) : easeInCubic(t);
+      const shift = item.total_extra_travel * shiftProgress;
       const headVec = DIRS[item.path.headDir];
       const newPts = item.cum.map(s => pointAtArclength(item.pts, item.cum, s + shift, headVec));
-      drawStrip(newPts, headVec, BLUE);
+      drawStrip(newPts, headVec, item.fillStyle || BLUE);
       return t < 1;
     });
 
@@ -2615,12 +4026,58 @@ function buildLayout(fast){
       return t < 1;
     });
 
-    if(leaving.length > 0 || bumping.length > 0){
+    if(leaving.length > 0 || bumping.length > 0 || shuffleAnim){
       requestAnimationFrame(draw);
     } else {
       animFrameQueued = false;
     }
 
+  }
+
+  // Checkpoint reshuffle transition: the old layout spins/shrinks/fades out
+  // around the board's center, then the new layout spins/grows/fades in
+  // the same way - a visible "shuffle" instead of an instant cut. Purely
+  // cosmetic: grid/pathsMap still hold the OLD layout for gameplay purposes
+  // until this finishes and performs the actual swap (input stays blocked
+  // the whole time via inputBlockedUntil, set when the animation started).
+  function drawShuffleAnim(now){
+    const anim = shuffleAnim;
+    const elapsed = now - anim.startTime;
+    const progress = Math.min(1, elapsed / anim.duration);
+    const restFillStyle = getArrowFillStyle();
+    const cx = boardW/2, cy = boardH/2;
+
+    ctx.save();
+    if(progress < 0.5){
+      // phase 1: old arrows spin/shrink/fade out
+      const p = easeInCubic(progress / 0.5);
+      const scale = 1 - 0.45*p;
+      ctx.globalAlpha = Math.max(0, 1 - p);
+      ctx.translate(cx, cy);
+      ctx.rotate(0.5 * p);
+      ctx.scale(scale, scale);
+      ctx.translate(-cx, -cy);
+      for(const p2 of anim.oldPaths) drawPathShape(p2, restFillStyle);
+    } else {
+      // phase 2: new arrows spin/grow/fade in
+      const p = easeInCubic((progress - 0.5) / 0.5);
+      const scale = 0.55 + 0.45*p;
+      ctx.globalAlpha = Math.max(0, p);
+      ctx.translate(cx, cy);
+      ctx.rotate(-0.5 * (1 - p));
+      ctx.scale(scale, scale);
+      ctx.translate(-cx, -cy);
+      for(const p2 of anim.newPathsMap.values()) drawPathShape(p2, restFillStyle);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+
+    if(progress >= 1){
+      grid = anim.newGrid;
+      pathsMap = anim.newPathsMap;
+      shuffleAnim = null;
+      saveGameState();
+    }
   }
 
   function requestDraw(){
@@ -2850,10 +4307,10 @@ function buildLayout(fast){
         saveProgress();
         showPopup(
             "New Arrow Pattern Unlock!",
-            "",
+            "Select a new arrow pattern in the Menu > Pattern",
             onDone,
             true, // celebrate: fire confetti, matches the Level Pass popup
-            2500  // auto-dismiss after 2.5s so it doesn't block starting the level
+            3000  // auto-dismiss after 2.5s so it doesn't block starting the level
         );
     }
 
@@ -2989,9 +4446,11 @@ function buildLayout(fast){
 
             }
 
+            const timeHtml = recordLevelTimeAndGetHtml(gameMode, currentLevel);
+
             showPopup(
                 "Level Pass",
-                "Starting next level",
+                getStartingLevelAnimationHtml("Starting next level..." + timeHtml),
                 () => {
                           const previousLevel = currentLevel;
                           currentLevel++;
@@ -3001,10 +4460,10 @@ function buildLayout(fast){
                           }
                           gameStarted = true;
                           clearGameState();
-                          maybeAnnouncePatternUnlock(previousLevel, startNewGame);
+                          maybeAnnouncePatternUnlock(previousLevel, () => maybeShowReviewPrompt(() => startNewGame(true)));
                       },
                 true, // celebrate: fire confetti from left & right
-                1000  // auto-dismiss after 1s so it doesn't require a tap
+                700   // auto-dismiss quickly so the next level starts faster
             );
 
         };
@@ -3037,13 +4496,54 @@ function buildLayout(fast){
             col >= COLS
         ) return;
 
-    const id = grid[row][col];
-    if(id === -1 || id == null) return;
+    const id0 = grid[row][col];
+    let id = id0;
+    if(id === -1 || id == null){
+        // Short arrows only occupy one or two cells, so they're genuinely
+        // hard to tap precisely - a near-miss right next to one should
+        // still count. Long arrows don't need this (they already have
+        // plenty of cells to land on), so this only ever helps the arrows
+        // that are actually difficult to hit, and never steals a tap that
+        // was clearly meant for a longer arrow further away.
+        const FORGIVENESS_RADIUS = 1;   // cells in each direction to look
+        const FORGIVENESS_MAX_LEN = 5;  // only extends the hit-box for arrows this short
+        let bestId = null, bestDist = Infinity;
+        for(let dr = -FORGIVENESS_RADIUS; dr <= FORGIVENESS_RADIUS; dr++){
+            for(let dc = -FORGIVENESS_RADIUS; dc <= FORGIVENESS_RADIUS; dc++){
+                if(dr === 0 && dc === 0) continue;
+                const rr = row + dr, cc = col + dc;
+                if(rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
+                const nid = grid[rr][cc];
+                if(nid === -1 || nid == null) continue;
+                const candidate = pathsMap.get(nid);
+                if(!candidate || candidate.cells.length > FORGIVENESS_MAX_LEN) continue;
+                const [cx, cy] = cellCenter(rr, cc);
+                const dist = Math.hypot(x - cx, y - cy);
+                if(dist < bestDist){
+                    bestDist = dist;
+                    bestId = nid;
+                }
+            }
+        }
+        if(bestId === null) return;
+        id = bestId;
+    }
     const path = pathsMap.get(id);
     if(!path) return;
 
     if(!isClear(path)){
       playSound(errorSound);
+      // Wrong-touch haptic feedback. Deliberately NOT gated behind
+      // soundMuted - vibration should fire even when sound is muted (and
+      // works independent of the device's ringer/silent switch, since
+      // navigator.vibrate is a JS-triggered haptic, not the ringer/media
+      // sound channel; it's simply unsupported on iOS Safari/WebViews).
+      if(navigator.vibrate){
+        const ok = navigator.vibrate(120);
+        if(!ok) console.warn('[vibrate] navigator.vibrate(120) returned false - call was rejected (likely missing android.permission.VIBRATE, or not called directly inside the gesture handler)');
+      } else {
+        console.warn('[vibrate] navigator.vibrate is undefined on this device/WebView');
+      }
     lives--;
   updateLives();
     flashing.add(id);
@@ -3100,12 +4600,19 @@ function buildLayout(fast){
     const margin = (COLS+ROWS) * cellSize;                 // guarantees it clears the board
     const total_extra_travel = total + margin;
     const duration = Math.max(220, total_extra_travel / SPEED);
+    const nextShuffleThreshold = getNextShuffleThreshold();
+    const shuffleWasReached = nextShuffleThreshold != null &&
+        levelArrowTotal > 0 &&
+        pathsMap.size > 0 &&
+        ((levelArrowTotal - pathsMap.size) / levelArrowTotal) >= nextShuffleThreshold;
 
     leaving.push({
       id,
       path,
       pts,
       cum,
+      fillStyle: getLeavingArrowFillStyle(),
+      fastStart: shuffleWasReached,
       total_extra_travel,
       duration,
       startTime: performance.now()
@@ -3115,8 +4622,31 @@ function buildLayout(fast){
 
   saveGameState();
 
-  maybeReshuffleHardMode();
-  updateShuffleWarning();
+  if(shuffleWasReached){
+      showPopup(
+          "Arrows Shuffled!",
+          "",
+          null,
+          false, // no confetti - this is a warning, not a celebration
+          500    // auto-dismiss quickly so it never blocks play
+      );
+
+      // Give the arrow a short head start behind the popup before the
+      // synchronous reshuffle work begins.
+      setTimeout(() => {
+          maybeReshuffleForMode(false);
+          // Intentionally called AFTER the reshuffle, not before: this is
+          // the clear that triggers the shuffle itself, so the "1" pop
+          // should never appear here - only the "Arrows Shuffled!" popup
+          // above. Calling it post-reshuffle means it evaluates the fresh
+          // post-shuffle state (next checkpoint reset), which naturally
+          // stays hidden instead of flashing a stale countdown number.
+          updateShuffleWarning();
+      }, 140);
+  } else {
+      maybeReshuffleForMode();
+      updateShuffleWarning();
+  }
   checkLevelComplete();
   }
 
@@ -3358,7 +4888,9 @@ function buildLayout(fast){
   }
 
         loadProgress();
+        loadBestTimes();
         syncUnlockedPatternTiers();
+        initReviewPromptState();
 
         const hasSave = loadGameState();
         if(hasSave){
@@ -3509,11 +5041,213 @@ function buildLayout(fast){
           }
       }, false);
 
+      // Fun, varied reminder copy instead of one fixed line per slot -
+      // several options per time-of-day, rotated by day-of-year so it
+      // doesn't say the exact same thing every single day. A players sees
+      // notifications reflecting today's actual date, not a static string.
+      const REMINDER_MESSAGE_POOL = {
+          morning: [
+              'Good morning! A few arrows are waiting to be untangled.',
+              'Rise and shine - your puzzle streak needs you!',
+              'Morning brain warm-up: 1 Arrow Puzzle level, GO!',
+              'Coffee in one hand, arrows in the other. Let\'s go!'
+          ],
+          evening: [
+              'Evening break time! One quick level never hurt anyone.',
+              'Untangle a few arrows before dinner - you\'ve got this.',
+              'Your board is exactly how you left it. Come finish it!',
+              'Evening puzzle o\'clock! Can you beat your last score?'
+          ],
+          night: [
+              'One more level before bed... we won\'t tell anyone.',
+              'Wind down with some arrows before you sleep.',
+              'Night owl mode: your puzzle grid is calling.',
+              'Last call for today - keep that streak alive!'
+          ]
+      };
+
+      function pickDailyMessage(pool){
+          const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(),0,0).getTime()) / 86400000);
+          return pool[dayOfYear % pool.length];
+      }
+
+      // If the player is close to unlocking a new arrow pattern, that's a
+      // far more compelling hook than a generic "come play" line - so it
+      // takes priority over the rotating pool whenever it applies. Uses
+      // whichever mode the player has pushed furthest in, since that's the
+      // progress they're most likely to care about finishing.
+      function getPatternProgressMessage(){
+          let bestLevel = 1;
+          for(const m of ['easy','medium','hard']){
+              const lvl = (maxUnlockedLevel && maxUnlockedLevel[m]) || 1;
+              if(lvl > bestLevel) bestLevel = lvl;
+          }
+
+          const info = getPatternProgressInfo(bestLevel);
+          if(!info || info.remaining > 3) return null;
+
+          return info.remaining === 1
+              ? 'Just 1 level to your next arrow pattern - so close!'
+              : `Only ${info.remaining} levels to your next arrow pattern!`;
+      }
+
+      // time for notifications: morning, evening, night. Text is rebuilt
+      // fresh every time scheduleReminderNotifications() runs (see the
+      // 'pause'/'resume' hooks below), so it always reflects today's date
+      // and the player's latest progress rather than staying static.
+      function getStreakMorningMessage(){
+          try{
+              const raw = localStorage.getItem(STREAK_KEY);
+              if(!raw) return null;
+              const state = JSON.parse(raw);
+              if(!state || !(state.count >= 3)) return null;
+              return `🔥 ${state.count} day streak! Keep it alive with a level today.`;
+          }catch(e){ return null; }
+      }
+
+      function buildReminderNotifications(){
+          const progressMsg = getPatternProgressMessage();
+          const streakMsg = getStreakMorningMessage();
+          return [
+              // Streak takes priority for the morning slot when there's one
+              // worth bragging about (3+ days) - otherwise falls back to
+              // the regular rotating pool.
+              { id: 1, title: 'Arrow Puzzle', text: streakMsg || pickDailyMessage(REMINDER_MESSAGE_POOL.morning), hour: 9, minute: 0 },
+              // Evening slot is the "progress" slot when there's something
+              // worth teasing - otherwise it just falls back to the pool.
+              { id: 2, title: 'Arrow Puzzle', text: progressMsg || pickDailyMessage(REMINDER_MESSAGE_POOL.evening), hour: 18, minute: 0 },
+              { id: 3, title: 'Arrow Puzzle', text: pickDailyMessage(REMINDER_MESSAGE_POOL.night), hour: 22, minute: 0 }
+          ];
+      }
+
+      function getNextReminderTime(hour, minute) {
+          const now = new Date();
+          const next = new Date(now);
+          next.setHours(hour, minute, 0, 0);
+          if (next <= now) {
+              next.setDate(next.getDate() + 1);
+          }
+          return next;
+      }
+
+      let browserReminderTimeouts = [];
+
+      function scheduleBrowserReminder(reminder) {
+          const next = getNextReminderTime(reminder.hour, reminder.minute);
+          const delay = next.getTime() - Date.now();
+          const timeoutId = setTimeout(() => {
+              try {
+                  new Notification(reminder.title, { body: reminder.text, tag: 'arrow-reminder-' + reminder.id, renotify: true });
+              } catch (err) {
+                  console.warn('Browser reminder failed:', err);
+              }
+              scheduleReminderNotifications(); // rebuild all 3 with fresh text/progress before re-arming
+          }, delay);
+          browserReminderTimeouts.push(timeoutId);
+      }
+
+      function scheduleReminderNotifications() {
+          const reminderNotifications = buildReminderNotifications();
+          const hasLocalNotification = window.cordova && window.cordova.plugins &&
+              window.cordova.plugins.notification && window.cordova.plugins.notification.local;
+
+          if (hasLocalNotification) {
+              const local = window.cordova.plugins.notification.local;
+
+              const doSchedule = () => {
+                  const ids = reminderNotifications.map(item => item.id);
+                  local.cancel(ids, () => {
+                      local.schedule(reminderNotifications.map((item) => ({
+                          id: item.id,
+                          title: item.title,
+                          text: item.text,
+                          trigger: { every: { hour: item.hour, minute: item.minute } },
+                          foreground: true
+                      })));
+                      console.log('Scheduled Cordova reminder notifications for morning, evening, and night.');
+                  });
+              };
+
+              // Android 13+ (API 33+) requires the app to hold the runtime
+              // POST_NOTIFICATIONS permission or scheduled notifications are
+              // silently swallowed by the OS - they schedule without error
+              // but never actually appear. hasPermission/requestPermission
+              // are provided by cordova-plugin-local-notification itself;
+              // on older Android versions (no runtime prompt needed) they
+              // just report granted immediately, so this is safe everywhere.
+              local.hasPermission((granted) => {
+                  if (granted) {
+                      doSchedule();
+                  } else {
+                      local.requestPermission((accepted) => {
+                          if (accepted) {
+                              doSchedule();
+                          } else {
+                              console.warn('Notification permission denied by user; reminders will not appear.');
+                          }
+                      });
+                  }
+              });
+              return;
+          }
+
+          if (window.Notification && typeof window.Notification.requestPermission === 'function') {
+              browserReminderTimeouts.forEach(id => clearTimeout(id));
+              browserReminderTimeouts = [];
+              if (Notification.permission === 'granted') {
+                  reminderNotifications.forEach(scheduleBrowserReminder);
+              } else if (Notification.permission !== 'denied') {
+                  Notification.requestPermission().then((permission) => {
+                      if (permission === 'granted') {
+                          reminderNotifications.forEach(scheduleBrowserReminder);
+                      } else {
+                          console.warn('Notification permission denied; reminders will not appear in browser.');
+                      }
+                  });
+              } else {
+                  console.warn('Notification permission denied; reminders will not appear in browser.');
+              }
+              return;
+          }
+
+          console.warn('Reminder notifications are not available in this environment.');
+      }
+
+      // NOTE: the 'backbutton' listener itself is already registered in the
+      // earlier deviceready block above. Registering it a second time here
+      // caused every hardware back press to fire handleHardwareBack() twice
+      // in a row - the first call opened the menu, and the second call (run
+      // immediately after, seeing the menu now visible) treated it as a
+      // repeat press and exited the app. This block now only schedules
+      // reminder notifications on deviceready.
+      document.addEventListener('deviceready', () => {
+          scheduleReminderNotifications();
+
+          // Re-arm with fresh copy every time the player leaves or returns
+          // to the app, not just once at launch - this is what lets the
+          // "X levels to your next pattern" message reflect their actual
+          // current progress instead of going stale after install day.
+          document.addEventListener('pause', scheduleReminderNotifications, false);
+          document.addEventListener('resume', scheduleReminderNotifications, false);
+
+          // Check for a newer published version - once at launch, and again
+          // whenever the player returns to the app (throttled internally
+          // so it won't hit the hosted JSON more than once per 6h).
+          checkForUpdate();
+          document.addEventListener('resume', checkForUpdate, false);
+      }, false);
+
+      if (!window.cordova) {
+          scheduleReminderNotifications();
+          checkForUpdate();
+      }
+
       // Always show the menu on launch, but showMenu() itself decides
       // whether the Resume button appears (only when gameStarted is true
       // AND progressMade is true, i.e. there's an actual saved game with
       // at least one arrow already cleared - a fresh, untouched board
       // just shows New Game instead).
+      updateStreakAndMaybeToast();
       showMenu();
 })();
 </script>
