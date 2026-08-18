@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='utf-8'?>
-<widget id="com.chiraagsurati.arrowpuzzle" version="2.0.4" android-versionCode="47" xmlns="http://w3.org" xmlns:cdv="http://apache.org" xmlns:android="http://android.com">
+<widget id="com.chiraagsurati.arrowpuzzle" version="2.3.0" android-versionCode="68" xmlns="http://w3.org" xmlns:cdv="http://apache.org" xmlns:android="http://schemas.android.com/apk/res/android">
     <name>Arrow : Puzzle Game</name>
     <description>
         A sample Apache Cordova application that responds to the deviceready event.
@@ -10,13 +10,17 @@
     <content src="index.html" />
     <allow-intent href="http://*/*" />
     <allow-intent href="https://*/*" />
+    <allow-intent href="sms:*" />
+    <allow-intent href="tel:*" />
+    <allow-intent href="mailto:*" />
     <access origin="*" />
     <icon src="icon.png" />
 
     <preference name="android-minSdkVersion" value="24" />
     <preference name="android-targetSdkVersion" value="36" />
+    <preference name="android-compileSdkVersion" value="36" />
     <preference name="Orientation" value="portrait" />
-
+    
     <platform name="android">
         <edit-config file="app/src/main/AndroidManifest.xml" target="/manifest/application" mode="merge">
             <application android:enableOnBackInvokedCallback="false" />
@@ -25,7 +29,29 @@
             <uses-permission android:name="android.permission.VIBRATE" />
             <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
         </config-file>
+
+        <resource-file src="res/android/ic_cdv_splashscreen.xml" target="app/src/main/res/drawable/ic_cdv_splashscreen.xml" />
+        <edit-config file="app/src/main/res/values/colors.xml" target="/resources/color[@name='cdv_splashscreen_background']" mode="merge">
+            <color name="cdv_splashscreen_background">#d9d8e2</color>
+        </edit-config>
     </platform>
 
+    <!-- Re-enabled: index.html's scheduleReminderNotifications() and the
+         launch-countdown notifications both depend on this plugin. Remember
+         the same caveat as always - adding/uncommenting this line alone
+         does NOT install it into an already-prepared native project. Run
+         `cordova plugin add cordova-plugin-local-notification`
+         (or platform remove/re-add android) so platforms/android and
+         build.gradle actually match this file. -->
     <plugin name="cordova-plugin-local-notification" spec="^1.2.3" />
+
+    <!-- Used by openExternalUrl() in index.html to hand Play Store links
+         off to Android's native Intent system instead of navigating the
+         game's own WebView - window.location.href to an external URL has
+         been found to break the WebView on some real devices. Run
+         `cordova plugin add cordova-plugin-inappbrowser` to actually
+         install it - adding this line alone does not install it into an
+         already-prepared native project, same caveat as the notification
+         plugin above. -->
+    <plugin name="cordova-plugin-inappbrowser" spec="^6.0.0" />
 </widget>
