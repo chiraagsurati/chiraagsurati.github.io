@@ -132,6 +132,27 @@ h1{
     cursor:pointer;
     display:none;
 }
+/* Sound and Report Bug: moved out of the main menu button list and into
+   fixed corner badges at the bottom of the screen (mirroring coinBadge/
+   streakBadge up top) - icon-only, no text label, same footprint as
+   those two badges. */
+#muteBtn, #reportBugBtn{
+    position:fixed;
+    bottom:14px;
+    background:#eef0fb;
+    color:#2c2f4a;
+    font-size:16px;
+    font-weight:800;
+    padding:5px 10px;
+    border-radius:16px;
+    box-shadow:0 2px 6px rgba(44,47,74,0.18);
+    z-index:20;
+    cursor:pointer;
+    border:none;
+    line-height:1.4;
+}
+#muteBtn{ left:14px; }
+#reportBugBtn{ right:14px; }
   :root{
     --bg:#d9d8e2;
     --board-bg:#dedde6;
@@ -278,7 +299,20 @@ h1{
     display:flex;
     justify-content:center;
     align-items:center;
-    position:relative;
+    /* Sticky (not the original relative/in-flow positioning) so the
+       Level/Lives/Menu bar stays pinned to the top of the screen even
+       when #wrap has to scroll (e.g. a big Hard board taller than the
+       viewport) - previously this could scroll out of view along with
+       the board, leaving the player unable to reach the hamburger menu
+       without scrolling back up first. Sticky (rather than fixed) keeps
+       its place in #wrap's normal flow, so no extra spacer/padding is
+       needed to avoid the board jumping up underneath it. */
+    position:sticky;
+    top:0;
+    z-index:60;
+    background:var(--bg);
+    padding:6px 14px;
+    border-radius:0 0 14px 14px;
     margin:0 auto 12px;
 }
 
@@ -455,12 +489,10 @@ h1{
 
         <button id="themeBtn" style="display:none;">🎨 Board Themes</button>
 
-        <button id="muteBtn">🔊 Sound</button>
-
-        <button id="reportBugBtn">🐞 Report Bug</button>
-
         <button id="exitBtn">❌ Exit</button>
      </div>
+     <button id="muteBtn">🔊</button>
+     <button id="reportBugBtn">🐞</button>
      <div id="appVersion"></div>
 </div>
 
@@ -515,6 +547,21 @@ h1{
       try{ if(typeof navigator.hardwareConcurrency === 'number') cores = navigator.hardwareConcurrency; }catch(e){}
       try{ screenInfo = screen.width + 'x' + screen.height + ' @' + (window.devicePixelRatio || 1) + 'x'; }catch(e){}
 
+      // Chromium-based WebViews (all modern Android WebView) expose a rough
+      // JS heap reading here. Not available everywhere/every build - stays
+      // 'n/a' silently if the API is missing, never throws. Included
+      // specifically to help tell apart "this was a plain catchable JS bug"
+      // vs "the heap was ballooning toward an OOM kill" for reports like a
+      // sudden auto-exit deep into a long session with no caught error.
+      let heapInfo = 'n/a';
+      try{
+        if(performance && performance.memory){
+          const usedMB = Math.round(performance.memory.usedJSHeapSize / 1048576);
+          const limitMB = Math.round(performance.memory.jsHeapSizeLimit / 1048576);
+          heapInfo = usedMB + 'MB / ' + limitMB + 'MB';
+        }
+      }catch(e){}
+
       let ua = 'unknown';
       try{ ua = (navigator.userAgent || 'unknown').slice(0, 200); }catch(e){}
       let lang = 'n/a', online = 'n/a';
@@ -532,6 +579,7 @@ h1{
         note ? ('Note: ' + note) : null,
         'Device: ' + ua,
         'Screen: ' + screenInfo + ' | Mem: ' + mem + ' | Cores: ' + cores,
+        'JS Heap: ' + heapInfo,
         'Lang: ' + lang + ' | Online: ' + online,
         'Time: ' + now
       ].filter(Boolean);
@@ -573,11 +621,23 @@ h1{
   function _writeSessionHeartbeat(active){
     try{
       if(active){
+        // Best-effort JS heap snapshot (Chromium WebViews only, silently
+        // 'n/a' elsewhere) so if this session turns out to have ended
+        // abnormally, checkForAbnormalPreviousSession() can report whether
+        // memory was climbing toward the device limit right before the
+        // kill - the difference between an OOM force-close and an ANR.
+        let heapMB = null;
+        try{
+          if(performance && performance.memory){
+            heapMB = Math.round(performance.memory.usedJSHeapSize / 1048576);
+          }
+        }catch(e){}
         localStorage.setItem(SESSION_HEARTBEAT_KEY, JSON.stringify({
           active: true,
           level: currentLevel,
           mode: gameMode,
-          ts: Date.now()
+          ts: Date.now(),
+          heapMB
         }));
       } else {
         localStorage.removeItem(SESSION_HEARTBEAT_KEY);
@@ -615,9 +675,13 @@ h1{
         ', ' + data.mode + ' mode). Send a report about last session?'
       );
       if(send){
+        const heapNote = (typeof data.heapMB === 'number')
+          ? (' Last known JS heap: ~' + data.heapMB + 'MB.')
+          : '';
         reportBug(null, null,
           'Previous session ended abnormally (no clean exit/pause detected) - ' +
-          'Level ' + data.level + ' (' + data.mode + '), last heartbeat ~' + ageSec + 's before termination.'
+          'Level ' + data.level + ' (' + data.mode + '), last heartbeat ~' + ageSec + 's before termination.' +
+          heapNote
         );
       }
     }catch(e){}
@@ -721,9 +785,9 @@ h1{
   document.addEventListener('pointerdown', unlockAudio, {once:true});
 
   const SOUND_MODES = {
-    sound: { label: '🔊 Sound', playSound: true, vibrate: false },
-    vibration: { label: '📳 Vibration', playSound: false, vibrate: true },
-    mute: { label: '🔇 Mute', playSound: false, vibrate: false }
+    sound: { label: '🔊 Sound', symbol: '🔊', playSound: true, vibrate: false },
+    vibration: { label: '📳 Vibration', symbol: '📳', playSound: false, vibrate: true },
+    mute: { label: '🔇 Mute', symbol: '🔇', playSound: false, vibrate: false }
   };
   let soundMode = 'sound';
 
@@ -740,7 +804,7 @@ h1{
 
   function updateMuteButton(){
     const muteBtn = document.getElementById('muteBtn');
-    if(muteBtn) muteBtn.textContent = SOUND_MODES[soundMode].label;
+    if(muteBtn) muteBtn.textContent = SOUND_MODES[soundMode].symbol;
   }
 
   function triggerHapticFeedback(){
@@ -849,6 +913,13 @@ h1{
   // picking a pattern while in Easy no longer carries over to Medium/Hard.
   let selectedPatternType = { easy: 'auto', medium: 'auto', hard: 'auto' };
   let unlockedPatternTiers = { easy: 1, medium: 1, hard: 1 };
+  // Patterns bought outright with gold coins. Unlike unlockedPatternTiers
+  // (per-mode, earned by leveling up) this is a single flat list of
+  // ARROW_PATTERN_TYPES entries shared across all 3 modes - once bought,
+  // a pattern is selectable everywhere regardless of that mode's own
+  // level-based tier progress.
+  let purchasedPatterns = [];
+  const PATTERN_BUY_COST = 10;
   // Whether the arrow-path grid overlay is on (toggled via the Grid button
   // beside the zoom controls); remembered across sessions like the mute
   // preference.
@@ -1045,7 +1116,13 @@ h1{
   let _isLowEndDeviceCached = null;
   function isLowEndDevice(){
     if(_isLowEndDeviceCached !== null) return _isLowEndDeviceCached;
-    let result = false;
+    // Fail safe: assume low-end (tight budget) unless detection proves
+    // otherwise. Some WebViews (MediaTek chips in particular) don't
+    // report deviceMemory/hardwareConcurrency reliably, and defaulting
+    // to "high-end" in that case grants the full 2500ms buildLayout()
+    // budget on a device that can't actually absorb it - a direct path
+    // to ANR force-closes on level start/retry.
+    let result = true;
     try{
       if(typeof navigator.deviceMemory === 'number'){
         result = navigator.deviceMemory <= 3;
@@ -1171,6 +1248,32 @@ h1{
     if(el) el.textContent = '\uD83E\uDE99 ' + goldCoins;
   }
 
+  // ---- Pattern purchases (gold coins) ----
+  // Buys a pattern outright, independent of level-based unlocks. Once
+  // bought it's usable in all 3 modes (Easy/Medium/Hard), unlike the
+  // normal tier unlocks which are earned separately per mode.
+  function isPatternPurchased(type){
+    return purchasedPatterns.includes(type);
+  }
+  function isPatternUnlocked(type, mode){
+    mode = mode || gameMode;
+    const i = ARROW_PATTERN_TYPES.indexOf(type);
+    if(i < 0) return false;
+    return TESTING_UNLOCK_ALL_PATTERNS || i < unlockedPatternTiers[mode] || isPatternPurchased(type);
+  }
+  function buyPattern(type){
+    if(!ARROW_PATTERN_TYPES.includes(type)) return false;
+    if(isPatternPurchased(type)) return false;
+    if(TESTING_UNLOCK_ALL_PATTERNS || ARROW_PATTERN_TYPES.indexOf(type) < unlockedPatternTiers[gameMode]) return false; // already unlocked normally
+    if(goldCoins < PATTERN_BUY_COST) return false;
+    goldCoins -= PATTERN_BUY_COST;
+    saveCoins();
+    purchasedPatterns.push(type);
+    saveProgress();
+    updateCoinBadge();
+    return true;
+  }
+
   // ---- Board Themes ----
   function loadThemeState(){
     try{
@@ -1193,6 +1296,10 @@ h1{
     const theme = BOARD_THEME_MAP[id] || BOARD_THEME_MAP.classic;
     document.documentElement.style.setProperty('--board-bg', theme.bg);
     document.documentElement.style.setProperty('--dot', theme.dot);
+    // Keep the per-frame render cache (see cachedBoardBg/cachedDotColor
+    // above) in sync whenever the actual CSS vars change.
+    cachedBoardBg = theme.bg;
+    cachedDotColor = theme.dot;
   }
   function buyTheme(id){
     const theme = BOARD_THEME_MAP[id];
@@ -1407,10 +1514,10 @@ h1{
   // same value AFTER the new build is live on Play Store (not before -
   // otherwise players get nagged to update before the update even exists
   // on the Store yet).
-  const APP_VERSION = '2.3.0';
+  const APP_VERSION = '2.3.1'; // game version
   document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 
-  const VERSION_CHECK_URL = 'https://raw.githubusercontent.com/chiraagsurati/arrow-puzzle-meta/main/version.json';
+  const VERSION_CHECK_URL = 'https://raw.githubusercontent.com/chiraagsurati/arrow_puzzle/main/version.json';
 
   const UPDATE_NOTIFIED_KEY = 'arrowPuzzleUpdateNotifiedVersion';
   const UPDATE_CHECK_COOLDOWN_KEY = 'arrowPuzzleUpdateCheckLast';
@@ -1866,6 +1973,9 @@ h1{
           // mode so nobody's already-unlocked patterns just vanish
           unlockedPatternTiers = { easy: savedTiers, medium: savedTiers, hard: savedTiers };
         }
+        if(Array.isArray(data.purchasedPatterns)){
+          purchasedPatterns = data.purchasedPatterns.filter(p => ARROW_PATTERN_TYPES.includes(p));
+        }
         if(typeof data.totalLevelsCleared === 'number'){
           totalLevelsCleared = data.totalLevelsCleared;
         }
@@ -1875,7 +1985,7 @@ h1{
 
   function saveProgress(){
     try{
-      localStorage.setItem(PROGRESS_KEY, JSON.stringify({maxUnlockedLevel, selectedPatternType, unlockedPatternTiers, totalLevelsCleared}));
+      localStorage.setItem(PROGRESS_KEY, JSON.stringify({maxUnlockedLevel, selectedPatternType, unlockedPatternTiers, purchasedPatterns, totalLevelsCleared}));
     }catch(e){}
   }
 
@@ -2428,9 +2538,22 @@ h1{
                   delete dailyBoardCache[dailyChallengeDate];
               } else {
                   // fast: quality tradeoff (a few more short arrows) is well
-                  // worth it here - this runs synchronously behind the loading
-                  // overlay, and tap-forgiveness (see handleTap) already makes
-                  // short arrows easy to hit regardless.
+                  // worth it here - this runs synchronously behind the
+                  // loading overlay. Board size is fixed per mode (doesn't
+                  // grow with level number), so this is exactly as fast
+                  // and exactly as reliable at level 1000 as at level 1 -
+                  // the per-attempt wall-clock check inside buildLayout()
+                  // (see its comments) is what actually bounds worst-case
+                  // time against ANR, not the level number. Deliberately
+                  // synchronous, not chunked/async: this used to run via
+                  // buildLayoutAsync() so a hard seed could search longer,
+                  // but that let two level-starts overlap in time (e.g.
+                  // right at a level-pass transition) and race on the
+                  // shared ROWS/COLS/grid globals mid-generation,
+                  // corrupting the board. Not worth the risk for a benefit
+                  // (a marginally tidier layout on a rare seed) this
+                  // small - tap-forgiveness (see handleTap) already makes
+                  // the occasional short arrow easy to hit regardless.
                   try{
                       layout = buildLayout(true);
                   }catch(e){
@@ -2792,7 +2915,7 @@ h1{
             </button>`;
         for(let i = 0; i < ARROW_PATTERN_TYPES.length; i++){
             const type = ARROW_PATTERN_TYPES[i];
-            const isUnlocked = TESTING_UNLOCK_ALL_PATTERNS || i < unlockedPatternTiers[gameMode];
+            const isUnlocked = isPatternUnlocked(type, gameMode);
             if(isUnlocked){
                 optionsHtml += `<button class="patternSelect" data-pattern="${type}">
                     <span>${PATTERN_DISPLAY_NAMES[type]}</span>
@@ -2801,14 +2924,16 @@ h1{
             } else {
                 const unlockLevel = i * getPatternUnlockInterval(gameMode);
                 // Locked rows still get the real preview swatch (dimmed +
-                // desaturated via CSS below), with a small lock badge
-                // overlaid on top - gives players a "sneak peek" of what
-                // they're working toward instead of just a bare number.
+                // desaturated via CSS below, now lighter so the pattern
+                // itself reads more clearly through the overlay), with a
+                // lock badge on top combining the level requirement and
+                // the coin price - tapping the badge buys the pattern
+                // outright instead of leveling up for it.
                 optionsHtml += `<button class="patternSelect" data-pattern="${type}" data-locked="true">
                     <span>${PATTERN_DISPLAY_NAMES[type]}</span>
                     <div class="patternPreviewWrap" style="position:relative;">
                         <canvas class="patternPreview" data-preview="${type}" data-locked-preview="true" width="120" height="46"></canvas>
-                        <div class="patternLockOverlay">🔒 Lvl ${unlockLevel}</div>
+                        <div class="patternLockOverlay" data-buy-pattern="${type}">🔒 Lvl ${unlockLevel} / \uD83E\uDE99${PATTERN_BUY_COST}</div>
                     </div>
                 </button>`;
             }
@@ -2832,7 +2957,7 @@ h1{
                     color:#2c2f4a;
                     margin-bottom:14px;
                 ">
-                    Select Pattern
+                    Select Pattern [${gameMode.charAt(0).toUpperCase() + gameMode.slice(1)}]
                 </div>
 
                 ${optionsHtml}
@@ -2868,13 +2993,14 @@ h1{
                         display:flex;
                         align-items:center;
                         justify-content:center;
-                        background:rgba(0,0,0,0.55);
+                        background:rgba(0,0,0,0.4);
                         color:#fff;
-                        font-size:11px;
+                        font-size:10px;
                         font-weight:700;
                         border-radius:6px;
                         white-space:nowrap;
-                        pointer-events:none;
+                        pointer-events:auto;
+                        cursor:pointer;
                     `;
                 }
             }
@@ -2893,9 +3019,25 @@ h1{
                 }
             }
             if(isLocked){
-                // Locked rows are informational only - no selection, no
-                // navigation away from the popup on tap.
-                btn.onclick = (e) => { e.stopPropagation(); };
+                // Locked rows are informational only EXCEPT for the lock
+                // badge itself - tapping it purchases the pattern with
+                // coins (if affordable) and refreshes the popup in place
+                // so it now shows unlocked/selectable. Tapping anywhere
+                // else on a locked row does nothing, same as before.
+                btn.onclick = (e) => {
+                    e.stopPropagation();
+                    const badge = e.target.closest('.patternLockOverlay');
+                    if(!badge) return;
+                    const type = badge.dataset.buyPattern;
+                    if(goldCoins < PATTERN_BUY_COST){
+                        badge.style.transform = 'scale(1.08)';
+                        setTimeout(() => { badge.style.transform = ''; }, 150);
+                        return;
+                    }
+                    if(buyPattern(type)){
+                        document.getElementById("patternBtn").onclick();
+                    }
+                };
                 return;
             }
             btn.onclick=()=>{
@@ -2918,7 +3060,7 @@ h1{
             canvas.style.cssText = `
                 border-radius:6px;
                 background:rgba(255,255,255,0.08);
-                ${isLockedPreview ? 'filter:grayscale(75%) brightness(0.55);' : ''}
+                ${isLockedPreview ? 'filter:grayscale(45%) brightness(0.8);' : ''}
             `;
             drawPatternPreviewIcon(canvas.dataset.preview, canvas);
         });
@@ -3086,7 +3228,7 @@ h1{
                     </div>
                     <div style="font-size:13px;color:#555;line-height:1.5;margin:10px 0 16px;">
                         Earn coins by clearing the <b>Daily Challenge</b>.<br>
-                        You'll be able to spend them on Board Themes soon!
+                        Spend them on Arrow Patterns (\uD83E\uDE99${PATTERN_BUY_COST} each) - buy any locked pattern instantly, usable across Easy, Medium &amp; Hard.
                     </div>
                     <button id="coinInfoCloseBtn" style="
                         border:none; border-radius:10px; padding:10px 20px;
@@ -3875,9 +4017,21 @@ function buildLayout(fast, timeBudgetOverrideMs){
             return best || buildFallbackLayout();
         }
 
-        // Checked every few attempts rather than every single one, so the
-        // clock read itself stays negligible overhead.
-        if(attempts % 5 === 0){
+        // Checked every attempt (not every few) so the wall-clock budget
+        // is a hard cap, not a soft one. A skip-N check assumes every
+        // attempt costs roughly the same - but on a real device (GC
+        // pause, thermal throttling, background app pressure, all more
+        // likely deep into a long session) a single attempt can spike far
+        // past its usual single-digit-ms cost, and a skipped check lets
+        // that overshoot the intended budget by several attempts' worth
+        // of time before the next check ever fires. That gap is enough to
+        // trip Android's ANR watchdog on an otherwise "capped" 2500ms
+        // budget - silent force-close, no catchable JS error, exactly the
+        // "app closed unexpectedly" symptom this is fixing.
+        // performance.now() itself costs a fraction of a microsecond, so
+        // checking every attempt instead of every 5th has no meaningful
+        // overhead - this only tightens the existing safety net.
+        {
             const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
             if(now - _genStart > TIME_BUDGET_MS){
                 return best || buildFallbackLayout();
@@ -3984,6 +4138,18 @@ function buildLayout(fast, timeBudgetOverrideMs){
     let grid = [];
     let pathsMap = new Map();
     let cellSize = 0, boardW = 0, boardH = 0;
+
+    // Cached copies of the --board-bg/--dot CSS custom properties, kept in
+    // sync by applyBoardTheme() (the only place those properties are ever
+    // set). draw()/drawDotGrid() run every animation frame, and reading
+    // these via getComputedStyle() there - as before - forces a synchronous
+    // style recalculation on every single frame of every animation, which
+    // is a major source of jank/dropped frames on low-end Android WebViews.
+    // Reading the plain cached strings instead is behaviorally identical
+    // (theme colors still update instantly on buy/equip, since that's the
+    // only place these are written) but costs nothing per frame.
+    let cachedBoardBg = '#dedde6';
+    let cachedDotColor = 'rgba(44,47,74,0.25)';
 
     let leaving = [];
     let bumping = []; // arrows currently animating a "wrong move" bump: nudge forward until they touch whatever's blocking them, then spring back
@@ -4242,21 +4408,27 @@ function buildLayout(fast, timeBudgetOverrideMs){
 
     const rDot = Math.max(1, cellSize*0.045);
 
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--dot').trim() || 'rgba(44,47,74,0.25)';
+    ctx.fillStyle = cachedDotColor || 'rgba(44,47,74,0.25)';
     // Dots sit at cell centers (same coordinates cellCenter() uses for
     // drawing arrows) so the background texture lines up with the paths
     // the arrows actually travel along. Drawn across every cell, not just
     // ones that currently hold an arrow - so once an arrow is cleared,
     // the dots reappear along the line it used to occupy instead of
     // leaving a blank gap.
+    // All dots share one fillStyle and never overlap, so they're batched
+    // into a single path + one fill() call instead of one beginPath/fill
+    // pair per dot (same pixels, far fewer canvas calls - this loop runs
+    // every animation frame, and on a large Hard board that's 200+
+    // individual fills per frame otherwise).
+    ctx.beginPath();
     for(let r=0; r<ROWS; r++){
       for(let c=0; c<COLS; c++){
         const [cx, cy] = cellCenter(r,c);
-        ctx.beginPath();
+        ctx.moveTo(cx + rDot, cy);
         ctx.arc(cx, cy, rDot, 0, Math.PI*2);
-        ctx.fill();
       }
     }
+    ctx.fill();
   }
 
   // cumulative arc-length along a path's cell centers, for continuous "slide along the path" motion
@@ -5128,9 +5300,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
       // A pinned pattern only applies once it's actually been unlocked in
       // this mode. Falls back to Auto Select's normal level-based tier
       // otherwise (e.g. right after a fresh unlock-tier reset).
-      const pinnedIndex = ARROW_PATTERN_TYPES.indexOf(pinned);
-      const pinnedUnlocked = TESTING_UNLOCK_ALL_PATTERNS || pinnedIndex < unlockedPatternTiers[gameMode];
-      if(pinnedUnlocked) return pinned;
+      if(isPatternUnlocked(pinned, gameMode)) return pinned;
     }
     return ARROW_PATTERN_TYPES[getPatternTierIndex(currentLevel)];
   }
@@ -5180,7 +5350,16 @@ function buildLayout(fast, timeBudgetOverrideMs){
     }
   }
 
+  // type -> computed solid head color. This is a pure function of `type`
+  // (getPatternBaseColor()'s table never changes at runtime), but
+  // drawStrip() calls it once per arrow, every animation frame - on a
+  // full Hard board that's 100+ redundant parseInt/luminance/darken
+  // recomputations per frame for a result that's identical every time.
+  // Caching removes that cost with zero behavior change.
+  const headColorCache = new Map();
   function getArrowHeadSolidColorForType(type){
+    const cached = headColorCache.get(type);
+    if(cached) return cached;
     // Darken the base so the head reads as a solid, clearly-visible dark
     // cap against the board (--board-bg is a light grey, #dedde6) - not
     // just relative to the patterned shaft. A flat, small darken amount
@@ -5196,7 +5375,9 @@ function buildLayout(fast, timeBudgetOverrideMs){
     else if(lum > 150) amt = 0.45; // light/medium bases (Gold)
     else if(lum > 90)  amt = 0.28; // mid-tone bases
     else amt = 0.16;               // already-dark bases - just a touch darker
-    return darkenColor(base, amt);
+    const result = darkenColor(base, amt);
+    headColorCache.set(type, result);
+    return result;
   }
 
   function getLeavingArrowFillStyle(){
@@ -5265,7 +5446,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
   // draws a pipe strip through an arbitrary list of points, with the arrowhead
   // built from the direction of travel at the very front point
   function drawStrip(pts, headVec, color){
-    const thickness = cellSize * 0.20;  // width of arrow (thickened so patterns/textures actually read)
+    const thickness = cellSize * 0.17;  // width of arrow (thickened so patterns/textures actually read)
 
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -5338,22 +5519,24 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // through its row, an up/down-facing head gets a vertical line through
     // its column. This shows at a glance which way each arrow will travel,
     // instead of a full crosshair on every occupied row and column.
+    // All lines share the same stroke style, so they're batched into one
+    // path + one stroke() call instead of one beginPath/stroke pair per
+    // arrow (same pixels, far fewer canvas calls per frame this overlay
+    // is visible for).
+    ctx.beginPath();
     pathsMap.forEach(path => {
       const [r, c] = path.cells[path.cells.length - 1]; // head cell
       if(path.headDir === 'left' || path.headDir === 'right'){
         const y = TOP_BAR + r*cellSize + cellSize/2;
-        ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(COLS*cellSize, y);
-        ctx.stroke();
       } else {
         const x = c*cellSize + cellSize/2;
-        ctx.beginPath();
         ctx.moveTo(x, TOP_BAR);
         ctx.lineTo(x, TOP_BAR + ROWS*cellSize);
-        ctx.stroke();
       }
     });
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -5395,7 +5578,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
 
   function draw(now){
     ctx.clearRect(0,0,boardW,boardH);
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--board-bg').trim();
+    ctx.fillStyle = cachedBoardBg;
     ctx.fillRect(0,0,boardW,boardH);
     drawDotGrid();
     if(showGrid) drawFullGrid();
@@ -5901,7 +6084,93 @@ function buildLayout(fast, timeBudgetOverrideMs){
   // tapping an arrow: if the way ahead is clear it slides out head-first, tail
   // following the same bent path (like a snake, drawn in blue while leaving);
   // if blocked, it turns red and stays red until it's eventually cleared
+  //
+  // Thin wrapper around handleTapInner(): a synchronous exception thrown
+  // deep inside gameplay logic (bad array index, null path, etc.) should
+  // normally still reach window.addEventListener('error', ...) and trigger
+  // an automatic bug report - but some Android WebView builds have been
+  // observed to swallow exceptions thrown from certain touch/pointer event
+  // paths before they ever reach that global listener, which would explain
+  // a report arriving with "no JS error caught" even though the underlying
+  // cause WAS a normal catchable bug, not a true OS-level ANR/OOM kill.
+  // This try/catch is a second, more direct safety net around the single
+  // riskiest function (the one that runs on every tap): if anything throws,
+  // it's now guaranteed to be caught right here and reported immediately
+  // with a real stack trace, rather than silently taking the whole app down.
   function handleTap(clientX, clientY){
+    try{
+      handleTapInner(clientX, clientY);
+    }catch(err){
+      console.error('[handleTap] caught exception:', err);
+      try{
+        const now = Date.now();
+        if(now - _lastAutoBugReportTime >= AUTO_BUG_REPORT_COOLDOWN_MS){
+          _lastAutoBugReportTime = now;
+          _bugReportToast('⚠️ Something went wrong - opening a bug report to send.');
+          reportBug(err && err.message, err && err.stack, 'Caught inside handleTap()');
+        }
+      }catch(e){}
+    }
+  }
+
+  // Finds which arrow a tap should register on, based on actual proximity
+  // to that arrow's drawn shape (the line through its cells plus its
+  // head) - not just "anywhere inside its grid cell" the way it worked
+  // before. A touch has to land within ARROW_HIT_RADIUS_FACTOR of a
+  // cell's size from the arrow's own line to count, so a tap that's
+  // genuinely far from any arrow (e.g. dead center of a big empty gap)
+  // never grabs one just because it happened to fall inside that arrow's
+  // occupied cell. If two different arrows both have a point within that
+  // radius (e.g. a tap landing in the gap between two paths running close
+  // together), it's ambiguous which one was meant, so that case is
+  // treated as a miss rather than guessing.
+  // Purely an input-handling change - doesn't touch board
+  // generation/solvability or which cells logically belong to which arrow.
+  const ARROW_HIT_RADIUS_FACTOR = 0.45; // fraction of a cell's size
+
+  // Shortest distance from point (px,py) to the segment (x0,y0)-(x1,y1).
+  function distToSegment(px, py, x0, y0, x1, y1){
+    const dx = x1-x0, dy = y1-y0;
+    const lenSq = dx*dx + dy*dy;
+    let t = lenSq > 0 ? ((px-x0)*dx + (py-y0)*dy) / lenSq : 0;
+    t = Math.max(0, Math.min(1, t));
+    const nx = x0 + dx*t, ny = y0 + dy*t;
+    return Math.hypot(px-nx, py-ny);
+  }
+
+  function findTappedArrowId(x, y){
+    const hitRadius = cellSize * ARROW_HIT_RADIUS_FACTOR;
+    let bestId = null;
+    let bestDist = hitRadius;
+    const idsInRange = new Set();
+
+    pathsMap.forEach((path, id) => {
+      const pts = path.cells.map(([r,c]) => cellCenter(r,c));
+      let dist;
+      if(pts.length === 1){
+        dist = Math.hypot(x-pts[0][0], y-pts[0][1]);
+      } else {
+        dist = Infinity;
+        for(let i=1; i<pts.length; i++){
+          const d = distToSegment(x, y, pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]);
+          if(d < dist) dist = d;
+        }
+      }
+
+      if(dist <= hitRadius){
+        idsInRange.add(id);
+        if(dist < bestDist){
+          bestDist = dist;
+          bestId = id;
+        }
+      }
+    });
+
+    if(idsInRange.size > 1) return null; // ambiguous - two different arrows both close enough
+    return bestId;
+  }
+
+  function handleTapInner(clientX, clientY){
 
     if(performance.now() < inputBlockedUntil) return;
 
@@ -5911,20 +6180,9 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // own unscaled coordinate space before dividing by cellSize.
     const x = (clientX - rect.left) * (boardW / rect.width);
     const y = (clientY - rect.top) * (boardH / rect.height);
-    const TOP_BAR = cellSize * 0.9;
 
-        const col = Math.floor(x / cellSize);
-        const row = Math.floor((y - TOP_BAR) / cellSize);
-
-        if (
-            row < 0 ||
-            row >= ROWS ||
-            col < 0 ||
-            col >= COLS
-        ) return;
-
-    const id = grid[row][col];
-    if(id === -1 || id == null) return;
+    const id = findTappedArrowId(x, y);
+    if(id === null) return;
 
     const path = pathsMap.get(id);
     if(!path) return;
