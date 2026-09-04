@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='utf-8'?>
-<widget id="com.chiraagsurati.arrowpuzzle" version="2.3.1" android-versionCode="69" xmlns="http://w3.org" xmlns:cdv="http://apache.org" xmlns:android="http://schemas.android.com/apk/res/android">
+<widget id="com.chiraagsurati.arrowpuzzle" version="2.3.8" android-versionCode="78" xmlns="http://w3.org" xmlns:cdv="http://apache.org" xmlns:android="http://schemas.android.com/apk/res/android">
     <name>Arrow : Puzzle Game</name>
     <description>
         A sample Apache Cordova application that responds to the deviceready event.
@@ -28,6 +28,7 @@
         <config-file target="AndroidManifest.xml" parent="/manifest">
             <uses-permission android:name="android.permission.VIBRATE" />
             <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+            <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
         </config-file>
 
         <resource-file src="res/android/ic_cdv_splashscreen.xml" target="app/src/main/res/drawable/ic_cdv_splashscreen.xml" />
@@ -44,6 +45,20 @@
          (or platform remove/re-add android) so platforms/android and
          build.gradle actually match this file. -->
     <plugin name="cordova-plugin-local-notification" spec="^1.2.3" />
+
+    <!-- AdMob (banner + rewarded). App ID / unit IDs are Arrow Puzzle's real
+         production IDs (see Ads_ID). Adding this line alone does NOT install
+         it into an already-prepared native project - same caveat as the
+         other two plugins below. Run "cordova plugin add admob-plus-cordova"
+         with variable APP_ID_ANDROID set to the app ID below (or platform
+         remove/re-add android) so platforms/android and AndroidManifest.xml
+         actually pick up the APPLICATION_ID meta-data this plugin injects.
+         The banner/rewarded UNIT IDs (as opposed to this APP ID) live in
+         index.html's AD_UNIT_IDS, not here. -->
+    <plugin name="admob-plus-cordova" spec="2.0.0-alpha.19">
+        <variable name="APP_ID_ANDROID" value="ca-app-pub-9836655516323886~4662475710" />
+    </plugin>
+    <preference name="AndroidXEnabled" value="true" />
 
     <!-- Used by openExternalUrl() in index.html to hand Play Store links
          off to Android's native Intent system instead of navigating the

@@ -27,8 +27,12 @@
     overflow-y:auto;
     /* Scales with viewport height instead of a fixed 24px, so short
        screens don't lose fitting-room to padding that a tall screen
-       doesn't need. */
-    padding:clamp(70px, 3vh, 24px) 0;
+       doesn't need. Ad banner height added on top since #menuScreen is
+       position:fixed (covers the whole viewport, doesn't inherit #wrap's
+       own ad-aware padding) - without this the title/Exit button/version
+       footer sit directly under the top/bottom ad banners. */
+    padding-top:calc(var(--ad-banner-height-top) + clamp(70px, 3vh, 24px));
+    padding-bottom:calc(var(--ad-banner-height-bottom) + clamp(70px, 3vh, 24px));
     box-sizing:border-box;
     z-index:9999;
 }
@@ -44,13 +48,17 @@
     justify-items:stretch;
     justify-content:center;
     /* Scales down on short screens so all buttons + title fit without
-       scrolling; caps at the original 18px on normal/tall screens. */
-    gap:clamp(6px, 1.8vh, 18px);
+       scrolling; caps trimmed from 18px to 12px now that Resume brings
+       the button count to 7 - the old cap was sized for 6. */
+    gap:clamp(5px, 1.4vh, 12px);
 }
 h1{
-    margin:0 0 clamp(10px, 3vh, 26px);
+    /* Cap trimmed from 26px to 16px (same reason as .menu-box gap above -
+       one more button needs to fit in the same vertical space). */
+    margin:0 0 clamp(8px, 2.2vh, 16px);
     color:#2c2f4a;
-    font-size:clamp(22px, 5vh, 32px);
+    /* Cap trimmed from 32px to 26px. */
+    font-size:clamp(20px, 4.2vh, 26px);
     font-weight:900;
     letter-spacing:5px;
     text-align:center;
@@ -62,16 +70,18 @@ h1{
 
     color:#2c2f4a;
 
-    /* Scales with viewport height (capped 20% larger than before) so all
-       buttons shrink together on shorter screens rather than overflowing
-       and forcing the menu to scroll. */
-    font-size:clamp(15.6px, 2.88vh, 21.12px);
+    /* Scales with viewport height. Cap trimmed from 21.12px back down to
+       18px - freeing vertical room for the 7th (Resume) button without
+       shrinking text on already-short screens, which were already at the
+       clamp's lower bound. */
+    font-size:clamp(15px, 2.6vh, 18px);
     font-weight:700;
 
     cursor:pointer;
 
-    /* Padding scales with the same 20% increase as the font size. */
-    padding:clamp(7.2px, 1.68vh, 13.44px) 32.64px;
+    /* Padding cap trimmed from 13.44px to 10px (vertical) and the fixed
+       horizontal padding from 32.64px to 26px, for the same reason. */
+    padding:clamp(6px, 1.3vh, 10px) 26px;
     /* No explicit width - justify-items:stretch on the parent grid makes
        every button fill the grid column, which is auto-sized to the
        widest button (Daily Challenge) - see .menu-box comment above. */
@@ -94,7 +104,10 @@ h1{
 }
 #appVersion{
     position:fixed;
-    bottom:12px;
+    /* Pushed up from +14px to +26px, matching #muteBtn/#reportBugBtn
+       below, so it clears the bottom ad strip with a bit more breathing
+       room. */
+    bottom:calc(var(--ad-banner-height-bottom) + 26px);
     left:50%;
     transform:translateX(-50%);
     color:rgba(44,47,74,0.55);
@@ -105,7 +118,7 @@ h1{
 }
 #coinBadge{
     position:fixed;
-    top:14px;
+    top:calc(var(--ad-banner-height-top) + 14px);
     right:14px;
     background:#fff7e0;
     color:#8a6a12;
@@ -119,7 +132,7 @@ h1{
 }
 #streakBadge{
     position:fixed;
-    top:14px;
+    top:calc(var(--ad-banner-height-top) + 14px);
     left:14px;
     background:#fff0e8;
     color:#a8451c;
@@ -132,13 +145,41 @@ h1{
     cursor:pointer;
     display:none;
 }
+/* "NEW" label on the Daily Challenge menu button - small badge pinned to
+   the button's top-right corner, matching #hardShuffleToggleBtn's NEW
+   badge style/positioning exactly. Only shown when today's challenge
+   hasn't been completed yet (see updateMenuStatus()). */
+#dailyBtn{
+    position:relative; /* anchors the "NEW" badge to the button's corner */
+}
+#dailyBtn .newBadge{
+    display:none; /* shown only via the .show-new-badge class, see updateMenuStatus() */
+    position:absolute;
+    top:-6px;
+    right:-6px;
+    background:#ff4d4d;
+    color:#fff;
+    font-size:8px;
+    font-weight:800;
+    letter-spacing:.3px;
+    padding:2px 5px;
+    border-radius:999px;
+    box-shadow:0 2px 5px rgba(0,0,0,.3);
+    line-height:1;
+    pointer-events:none;
+}
+#dailyBtn.show-new-badge .newBadge{
+    display:block;
+}
 /* Sound and Report Bug: moved out of the main menu button list and into
    fixed corner badges at the bottom of the screen (mirroring coinBadge/
    streakBadge up top) - icon-only, no text label, same footprint as
    those two badges. */
 #muteBtn, #reportBugBtn{
     position:fixed;
-    bottom:14px;
+    /* Pushed up from +14px to +26px for more clearance above the bottom
+       ad strip. */
+    bottom:calc(var(--ad-banner-height-bottom) + 26px);
     background:#eef0fb;
     color:#2c2f4a;
     font-size:16px;
@@ -158,7 +199,13 @@ h1{
     --board-bg:#dedde6;
     --pipe:#2c2f4a;
     --dot: rgba(44,47,74,0.28);
-    --ad-banner-height: 50px;
+    /* Kept separate (rather than one shared --ad-banner-height) because
+       the ad SDK reports live banner heights and applyAdBannerHeights()
+       writes these values for both fixed ad slots. */
+    --ad-banner-height-top: 50px;
+    --ad-banner-height-bottom: 50px;
+    --ad-clearance-top: 12px;
+    --ad-clearance-bottom: 28px;
   }
   *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
   html,body{
@@ -180,19 +227,32 @@ h1{
   .adBanner{
     position:fixed;
     left:0; right:0;
-    height:var(--ad-banner-height);
     z-index:500;
     user-select:none;
   }
-  #adBannerTop{ top:0; }
-  #adBannerBottom{ bottom:0; }
+  #adBannerTop{ top:0; height:var(--ad-banner-height-top); }
+  #adBannerBottom{ bottom:0; height:var(--ad-banner-height-bottom); }
   #wrap{
     width:100%; min-height:100%;
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    /* justify-content:flex-start (not center) - matches #menuScreen's own
+       top-aligned layout above. On a small board (Easy mode especially,
+       where cellSize ends up limited by width rather than height) the
+       topBar+board+zoomControls column is much shorter than the space
+       available between the two ad banners; centering it split that
+       leftover space evenly above AND below, which both opened up a big
+       empty gap above the LEVEL/hearts/menu row AND ate into the safety
+       margin layoutCanvas() calculated for keeping the zoom/grid/shuffle
+       row clear of the bottom ad banner. Top-aligning puts ALL of that
+       leftover space below the zoom controls row instead, where it's
+       harmless, and keeps everything pinned right under the top ad
+       banner like the menu already does. */
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
     gap:14px;
     overflow-y:auto;
-    padding:calc(var(--ad-banner-height) + 10px) 0;
+    padding-top:calc(var(--ad-banner-height-top) + var(--ad-clearance-top));
+    padding-bottom:calc(var(--ad-banner-height-bottom) + var(--ad-clearance-bottom));
   }
+
   #title{
     color:#2c2f4a;
     letter-spacing: 10px;
@@ -266,6 +326,26 @@ h1{
     gap:6px;           /* 5px * 1.2 */
     font-size:10.8px;  /* 9px * 1.2 */
     letter-spacing:.2px;
+    position:relative; /* anchors the "NEW" badge to the button's corner */
+}
+#hardShuffleToggleBtn .newBadge{
+    display:none; /* shown only via the .show-new-badge class, see updateHardShuffleToggleBtn() */
+    position:absolute;
+    top:-6px;
+    right:-6px;
+    background:#ff4d4d;
+    color:#fff;
+    font-size:8px;
+    font-weight:800;
+    letter-spacing:.3px;
+    padding:2px 5px;
+    border-radius:999px;
+    box-shadow:0 2px 5px rgba(0,0,0,.3);
+    line-height:1;
+    pointer-events:none;
+}
+#hardShuffleToggleBtn.show-new-badge .newBadge{
+    display:block;
 }
 #hardShuffleToggleBtn .switchKnob{
     width:24px;    /* 20px * 1.2 */
@@ -311,9 +391,12 @@ h1{
     top:0;
     z-index:60;
     background:var(--bg);
-    padding:6px 14px;
+    padding:4px 14px;
     border-radius:0 0 14px 14px;
-    margin:0 auto 12px;
+    /* Bottom margin trimmed from 12px to 6px to pull the board up closer
+       to the level/hearts/menu row, matching the tighter #wrap padding
+       above. */
+    margin:0 auto 6px;
 }
 
 #lives{
@@ -327,9 +410,6 @@ h1{
     letter-spacing:3px;
 
 }
-#topBar.daily #lives{
-    transform:translateY(6px);
-}
 
 #levelLabel{
     position:absolute;
@@ -342,6 +422,14 @@ h1{
     font-weight:800;
     letter-spacing:1px;
     white-space:nowrap;
+}
+/* Daily Challenge: the label holds a full date ("DAILY · Sep 2"), which
+   is wide enough to run under the (horizontally centered) hearts when
+   both sit at their normal positions. Simplest fix: leave everything
+   else exactly as it was and just shift #lives itself further right in
+   daily mode, clear of the date text - no layout/flow changes. */
+#topBar.daily #lives{
+    transform:translateX(45px);
 }
 
 #shuffleCountPopup{
@@ -462,6 +550,7 @@ h1{
     <button id="hardShuffleToggleBtn" class="zoomBtn" title="Hard mode shuffle on/off">
       <span class="switchKnob" aria-hidden="true"></span>
       <span class="switchLabel">Shuffle</span>
+      <span id="hardShuffleNewBadge" class="newBadge" aria-hidden="true">NEW</span>
     </button>
   </div>
 
@@ -485,7 +574,7 @@ h1{
 
         <button id="patternBtn">Pattern</button>
 
-        <button id="dailyBtn">📅 Daily Challenge</button>
+        <button id="dailyBtn">📅 Daily Challenge<span id="dailyNewBadge" class="newBadge">NEW</span></button>
 
         <button id="themeBtn" style="display:none;">🎨 Board Themes</button>
 
@@ -500,9 +589,58 @@ h1{
 <script>
 (function(){
   const canvas = document.getElementById('board');
-  const ctx = canvas.getContext('2d');
+  // alpha:false - the board always paints an opaque background first (see
+  // draw()'s fillRect), so the canvas never actually needs a transparent
+  // backdrop. Telling the browser that up front lets it use a cheaper,
+  // opaque compositing path for this canvas on every single frame instead
+  // of the default alpha-aware one - free performance, no visual change.
+  const ctx = canvas.getContext('2d', {alpha: false});
   const boardViewport = document.getElementById('boardViewport');
   const boardFrame = document.getElementById('boardFrame');
+  const wrapEl = document.getElementById('wrap');
+  const topBarEl = document.getElementById('topBar');
+  const zoomControlsEl = document.querySelector('.zoomControls');
+
+  // Real on-screen height of everything in #wrap's flex column OTHER than
+  // #boardViewport itself: the sticky #topBar (level/hearts/menu row) and
+  // the .zoomControls row below the board, plus the flex `gap` between
+  // all three. Measured live via getBoundingClientRect/computed style
+  // instead of a hardcoded guess, so if either row's own CSS ever changes
+  // (font-size, padding, a new button...) the board sizing below stays
+  // correct automatically instead of silently drifting out of sync and
+  // pushing zoomControls down behind the bottom ad banner. Used by both
+  // getReferenceCellSize() and layoutCanvas() - must stay in sync between
+  // the two (see comments on both).
+  function getChromeHeight(){
+    const topBarH = topBarEl ? topBarEl.getBoundingClientRect().height : 0;
+    const topBarMarginBottom = topBarEl ? parseFloat(getComputedStyle(topBarEl).marginBottom) || 0 : 0;
+    const zoomH = zoomControlsEl ? zoomControlsEl.getBoundingClientRect().height : 0;
+    const wrapGap = wrapEl ? (parseFloat(getComputedStyle(wrapEl).rowGap) || 0) : 0;
+    // Two gaps: between topBar and boardViewport, and between
+    // boardViewport and zoomControls. topBar's own margin-bottom is on
+    // top of (not instead of) the flex gap.
+    return topBarH + topBarMarginBottom + zoomH + wrapGap * 2;
+  }
+
+  // ---- Offscreen "static layer" cache ----
+  // Every leaving-arrow / bump / shuffle animation frame used to redraw
+  // the ENTIRE board from scratch: background, dot grid, grid overlay, and
+  // every single still-resting arrow - even though only 1-2 arrows are
+  // actually moving. On a large Hard board (100+ arrows) that's 100+
+  // redundant shape draws per frame just to animate one arrow sliding out.
+  // Instead, everything that ISN'T currently animating is drawn once onto
+  // this offscreen canvas and reused as a single fast image-copy each
+  // frame; it's only ever redrawn from scratch when the underlying board
+  // state actually changes (see staticLayerNeedsRebuild() below), not on
+  // every animation tick. Purely a render-caching layer - never touches
+  // grid/pathsMap/game state, so it can't affect gameplay or generation.
+  const staticCanvas = document.createElement('canvas');
+  const staticCtx = staticCanvas.getContext('2d', {alpha: false});
+  const _staticCache = {
+    pathsMapRef: null, pathsMapSize: -1, bumpingLen: -1, flashingSize: -1,
+    cellSize: -1, showGrid: null, patternType: null,
+    boardBg: null, dotColor: null
+  };
 
   // ---- Bug reporting ----
   // Browsers/WebViews have no API to send an SMS silently in the
@@ -827,9 +965,9 @@ h1{
     }catch(e){ console.warn('Sound error:', sound.src, e); }
   }
 
-      // ---- Config (tweak freely later) ----
-    let COLS = 10;
-    let ROWS = 15;
+      // ---- Config (tweak freely later) board size ----
+    let COLS = 14;
+    let ROWS = 10;
     let gameMode = "medium";
     const MODES = {
         easy: {
@@ -841,8 +979,8 @@ h1{
             cols: 10
         },
         hard: {
-            rows: 18,
-            cols: 12
+            rows: 21,
+            cols: 18
         }
     };
   const PIPE_COLOR = '#2c2f4a';
@@ -864,7 +1002,23 @@ h1{
   // the player's finger. handleTap() ignores anything that arrives before
   // this timestamp so those stray queued taps can't land on the wrong,
   // just-reshuffled arrow and cost a life.
-  let inputBlockedUntil = 0;
+  // Replaces the old "inputBlockedUntil = performance.now() + N" deadline
+  // pattern. That pattern compared two separate performance.now() reads
+  // against each other, which silently assumed the device's monotonic
+  // clock advances smoothly - on some Android chipsets/OEM WebView builds
+  // (aggressive background-timer throttling, buggy clock implementations)
+  // it can stall or drift, so the "now < deadline" check never resolves
+  // and every tap gets swallowed forever (reported as "arrow stuck").
+  // setTimeout firing is the source of truth here instead: it doesn't
+  // depend on a second clock read agreeing with the first one, so it
+  // self-heals even on a device with a misbehaving performance.now().
+  let inputBlocked = false;
+  let _inputBlockTimer = null;
+  function blockInputFor(ms){
+    inputBlocked = true;
+    if(_inputBlockTimer) clearTimeout(_inputBlockTimer);
+    _inputBlockTimer = setTimeout(() => { inputBlocked = false; _inputBlockTimer = null; }, ms);
+  }
   let gameStarted = false;
   let progressMade = false; // true once at least one arrow has actually been cleared this level
   // Which mode the board currently sitting in pathsMap/grid was actually
@@ -940,6 +1094,15 @@ h1{
   // normal per-mode level ladder (maxUnlockedLevel etc), so Daily runs
   // never interfere with normal progression.
   let dailyChallengeActive = false;
+  // Tracks whether "Watch Ad for +1 Life" has already been used for the
+  // CURRENT level (Level+Mode, or Daily Challenge date) - capped at one use
+  // per level, not per attempt: retrying the same level (free retry, or the
+  // ad-unavailable fallback) must NOT refresh this, only actually moving to
+  // a different level/mode/daily-date does. See startNewGameNow(), which
+  // compares extraLifeAdLevelKey against the level about to be played and
+  // only resets extraLifeAdUsedThisAttempt when they differ.
+  let extraLifeAdUsedThisAttempt = false;
+  let extraLifeAdLevelKey = null;
   let dailyChallengeDate = null; // 'YYYY-MM-DD' (UTC) of the day being played
   let goldCoins = 0;
   let ownedThemes = ['classic'];
@@ -959,6 +1122,7 @@ h1{
   const BOARD_GENERATOR_VERSION = 2;
   const GRID_PREF_KEY = 'arrowPuzzleShowGrid';
   const HARD_SHUFFLE_PREF_KEY = 'arrowPuzzleHardShuffle';
+  const HARD_SHUFFLE_TOGGLE_USED_KEY = 'arrowPuzzleHardShuffleToggleUsed'; // once truthy, the "NEW" badge on the button is hidden for good
   const REVIEW_KEY = 'arrowPuzzleReviewPrompt';
 
   // ---- Daily play streak ----
@@ -1077,7 +1241,7 @@ h1{
 
   // ---- Daily Challenge ----
   // First playable day. Dates before this never appear in the calendar.
-  const DAILY_CHALLENGE_START = '2026-08-01';
+  const DAILY_CHALLENGE_START = '2026-01-01';
 
   // Explicit grid sizes for each Daily Challenge tier. This keeps the
   // board dimensions readable and easy to tune in one place instead of
@@ -1185,13 +1349,24 @@ h1{
   // JS turn, nothing else can render or read them in between.
   let dailyBoardCache = {}; // dateStr -> {rows, cols, grid, paths}
 
+  // BACKGROUND_WARM_TIME_BUDGET_MS - this runs opportunistically while the
+  // player is just browsing the calendar, not in response to them tapping
+  // a date. Deliberately given a much tighter time budget than a real
+  // tap-triggered build (see buildLayout's default TIME_BUDGET_MS) - a
+  // background build settling for a slightly less "optimal" arrow layout
+  // costs nothing (buildLayout's solvability guarantee never depends on
+  // how long it searched), but letting each one run up to the full 2.5s
+  // budget is what let a burst of several staggered background builds
+  // pile up on the main thread and block a real tap for 10-15+ seconds.
+  const BACKGROUND_WARM_TIME_BUDGET_MS = 500;
+
   function precomputeDailyBoard(dateStr){
     if(!dateStr || dailyBoardCache[dateStr]) return;
     const savedRows = ROWS, savedCols = COLS, savedMinLen = MIN_ARROW_LENGTH, savedMaxSteps = MAX_STEPS;
     try{
       const cfg = getDailyLevelConfig(dateStr); // seeds rng() itself
       ROWS = cfg.rows; COLS = cfg.cols; MIN_ARROW_LENGTH = cfg.minArrowLength; MAX_STEPS = cfg.maxSteps;
-      const layout = buildLayout(true);
+      const layout = buildLayout(true, BACKGROUND_WARM_TIME_BUDGET_MS);
       dailyBoardCache[dateStr] = {rows: ROWS, cols: COLS, grid: layout.grid, paths: layout.paths};
     }catch(e){
       // Background/opportunistic work only - if it fails for any reason
@@ -1514,7 +1689,7 @@ h1{
   // same value AFTER the new build is live on Play Store (not before -
   // otherwise players get nagged to update before the update even exists
   // on the Store yet).
-  const APP_VERSION = '2.3.2'; // game version
+  const APP_VERSION = '2.3.8'; // game version
   document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 
   const VERSION_CHECK_URL = 'https://raw.githubusercontent.com/chiraagsurati/arrow_puzzle/main/version.json';
@@ -1617,11 +1792,30 @@ h1{
     if(!hasLocalNotification) return;
 
     const local = window.cordova.plugins.notification.local;
-    local.schedule({
-        id: 99,
-        title: 'Arrow Puzzle update available',
-        text: message || 'A new version is ready - tap to update!',
-        foreground: true
+    const doSchedule = () => {
+        local.schedule({
+            id: 99,
+            title: 'Arrow Puzzle update available',
+            text: message || 'A new version is ready - tap to update!',
+            foreground: true
+        });
+    };
+
+    // BUG FIX: this used to call local.schedule() directly with no
+    // permission check. On Android 13+ (API 33+), scheduling without the
+    // runtime POST_NOTIFICATIONS permission fails silently - no error, no
+    // notification, nothing - which is exactly why some devices never
+    // showed this. scheduleReminderNotifications() already does this
+    // hasPermission/requestPermission dance; this path just didn't.
+    local.hasPermission((granted) => {
+        if(granted){
+            doSchedule();
+        } else {
+            local.requestPermission((accepted) => {
+                if(accepted) doSchedule();
+                else console.warn('Notification permission denied; update alert will not appear in tray.');
+            });
+        }
     });
   }
 
@@ -1691,7 +1885,6 @@ h1{
   // that install.
   const WHATS_NEW_SEEN_KEY = 'arrowPuzzleWhatsNewSeen';
   const WHATS_NEW_ITEMS = [
-    { id: 'hard-shuffle-toggle', title: 'NEW', text: 'Shuffle On/Off option in Hard mode - find it next to the zoom controls while you play.' }
   ];
 
   function getSeenWhatsNewIds(){
@@ -1763,6 +1956,102 @@ h1{
 
     document.body.appendChild(popup);
     popup.querySelector("#whatsNewOkBtn").addEventListener("click", () => popup.remove());
+  }
+
+  // ---- "Welcome" first-ever-launch popup ----
+  // Distinct from "What's New" above: that one is for EXISTING players
+  // meeting a feature added after they already installed the game. This
+  // one is for a genuinely brand-new install - a single overview card
+  // introducing the core systems (coins, streak, patterns, daily
+  // challenge) up front, shown once, right when the menu first appears.
+  // Whether this is a first-ever launch is decided by the caller BEFORE
+  // loadProgress() runs (see isNewInstall near the bottom of this file) -
+  // PROGRESS_KEY only ever gets written by saveProgress(), so its absence
+  // means this device has never made any progress at all.
+  const WELCOME_SEEN_KEY = 'arrowPuzzleWelcomeSeen';
+  const WELCOME_FEATURES = [
+      {icon:'\uD83E\uDE99', title:'Gold Coins', text:'Clear levels to earn gold coins, then spend them to unlock new arrow patterns and board themes.'},
+      {icon:'\uD83D\uDD25', title:'Daily Streak', text:'Open the game on consecutive days to build a streak - miss a day and it resets.'},
+      {icon:'\uD83C\uDFA8', title:'Arrow Patterns', text:'Unlock multiple arrow skins and mix up how your board looks as you play.'},
+      {icon:'\uD83D\uDCC5', title:'Daily Challenge', text:'A brand new seeded puzzle every day - come back and clear it before the day resets.'}
+  ];
+
+  function showWelcomeFeaturesPopup(){
+    const old = document.getElementById("welcomePopup");
+    if(old) old.remove();
+
+    const popup = document.createElement("div");
+    popup.id = "welcomePopup";
+    popup.style.cssText = `
+        position:fixed;
+        top:0; right:0; bottom:0; left:0;
+        background:rgba(0,0,0,.45);
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        z-index:9999;
+    `;
+
+    const itemsHtml = WELCOME_FEATURES.map(f => `
+        <div style="display:flex; align-items:flex-start; text-align:left; gap:12px; margin-bottom:14px;">
+            <div style="font-size:26px; line-height:1;">${f.icon}</div>
+            <div>
+                <div style="font-size:14px; font-weight:800; color:#2c2f4a; margin-bottom:2px;">${f.title}</div>
+                <div style="font-size:13px; color:#666; line-height:1.4;">${f.text}</div>
+            </div>
+        </div>
+    `).join('');
+
+    popup.innerHTML = `
+        <div style="
+            background:white;
+            border-radius:18px;
+            padding:26px 26px 22px;
+            text-align:center;
+            box-shadow:0 15px 40px rgba(0,0,0,.25);
+            min-width:270px;
+            max-width:330px;
+        ">
+            <div style="font-size:38px; margin-bottom:6px;">\uD83D\uDC4B</div>
+            <div style="font-size:20px; font-weight:bold; color:#2c2f4a; margin-bottom:16px;">
+                Welcome to Arrow Puzzle!
+            </div>
+            <div>${itemsHtml}</div>
+            <button id="welcomeOkBtn" style="
+                background:#4d63ff; border:none; border-radius:12px; color:#fff;
+                font-size:16px; font-weight:700; padding:13px 20px; width:100%;
+                cursor:pointer; box-shadow:0 4px 10px rgba(77,99,255,.35); margin-top:4px;
+            ">Let's Play!</button>
+        </div>
+    `;
+
+    document.body.appendChild(popup);
+    popup.querySelector("#welcomeOkBtn").addEventListener("click", () => popup.remove());
+  }
+
+  // Same "don't stack on another full-screen popup" guard as
+  // maybeShowWhatsNew() below, with the same short retry-then-give-up
+  // backoff. Marks itself seen immediately (not after the button tap) so
+  // a killed/backgrounded app never gets stuck retrying this forever and
+  // re-shows it on the next launch instead.
+  function maybeShowWelcomeFeatures(retriesLeft){
+    if(retriesLeft === undefined) retriesLeft = 6;
+    if(localStorage.getItem(WELCOME_SEEN_KEY)) return;
+    if(document.getElementById('updatePopup') || document.getElementById('announcementPopup') || document.getElementById('gamePopup')){
+      if(retriesLeft > 0) setTimeout(() => maybeShowWelcomeFeatures(retriesLeft - 1), 500);
+      return;
+    }
+    try{ localStorage.setItem(WELCOME_SEEN_KEY, '1'); }catch(e){}
+    // A brand-new install already saw these systems introduced here, so
+    // pre-seed the "What's New" seen-list with every item that exists
+    // today - otherwise the very next launch would immediately re-explain
+    // the same features via a "what's new" popup. Anything added to
+    // WHATS_NEW_ITEMS after this device's install date still comes
+    // through normally, since only TODAY's ids get seeded.
+    try{
+      localStorage.setItem(WHATS_NEW_SEEN_KEY, JSON.stringify(WHATS_NEW_ITEMS.map(i => i.id)));
+    }catch(e){}
+    showWelcomeFeaturesPopup();
   }
 
   // Shows at most one "what's new" popup per launch, even if several new
@@ -2010,6 +2299,38 @@ h1{
     }catch(e){}
   }
 
+  // ---- Debounced save wrapper ----
+  // Root cause of the CMF Phone 2 (and similar) persistent crash: calling
+  // saveGameState() synchronously on every single tap does a JSON.stringify
+  // + localStorage.setItem of the whole board on the main thread every tap.
+  // On large Hard-mode boards, at fast tap speed, this is enough
+  // synchronous main-thread work per tap to trip Android's ANR watchdog,
+  // which can force-close the app on some devices. requestSaveGameState()
+  // coalesces bursts of taps into a single write ~220ms after the last one,
+  // instead of writing on every tap. flushSaveGameState() forces an
+  // immediate write (used on visibilitychange, so backgrounding/killing the
+  // app right after a tap can't lose that last move). clearGameState()
+  // cancels any pending write so a stale board can't get written back after
+  // the save key was intentionally cleared (e.g. on game over).
+  const SAVE_DEBOUNCE_MS = 220;
+  let _pendingSaveTimer = null;
+
+  function requestSaveGameState(){
+    if(_pendingSaveTimer !== null) clearTimeout(_pendingSaveTimer);
+    _pendingSaveTimer = setTimeout(() => {
+      _pendingSaveTimer = null;
+      saveGameState();
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  function flushSaveGameState(){
+    if(_pendingSaveTimer !== null){
+      clearTimeout(_pendingSaveTimer);
+      _pendingSaveTimer = null;
+    }
+    saveGameState();
+  }
+
   // Old APKs could leave a broken Level-25 board in localStorage. Since
   // localStorage survives an APK update, simply replacing buildFallbackLayout()
   // is NOT enough: the fixed APK may never call the generator at all because
@@ -2069,7 +2390,7 @@ h1{
       gameMode = data.mode || gameMode;
       activeBoardMode = gameMode;
       currentLevel = data.level || 1;
-      lives = data.lives || 3;
+      lives = (typeof data.lives === 'number') ? data.lives : 3;
       dailyChallengeActive = !!data.dailyActive;
       dailyChallengeDate = data.dailyDate || null;
       ROWS = data.rows;
@@ -2094,8 +2415,19 @@ h1{
   }
 
   function clearGameState(){
+    // Cancel any in-flight debounced write first - otherwise a pending
+    // saveGameState() from a tap just before this call can fire ~220ms
+    // later and silently re-write the very state we're clearing.
+    if(_pendingSaveTimer !== null){
+      clearTimeout(_pendingSaveTimer);
+      _pendingSaveTimer = null;
+    }
     try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'hidden') flushSaveGameState();
+  });
 
   // Snapshots the currently-live board (grid/pathsMap/etc.) into
   // modeBoardCache under whichever mode it actually belongs to
@@ -2263,6 +2595,17 @@ h1{
                 ? 'Auto'
                 : (PATTERN_DISPLAY_NAMES[currentPattern] || currentPattern);
             document.getElementById("patternBtn").textContent = "Pattern : " + patternLabel;
+
+            // "NEW" badge on Daily Challenge: only while today's own
+            // challenge (not just "any" challenge) hasn't been played yet.
+            // getTodayDateStr() is UTC-based, matching isDailyCompleted's
+            // keys and getDailyChallengeDates() elsewhere in this file.
+            const dailyBtnEl = document.getElementById("dailyBtn");
+            if(dailyBtnEl){
+                const todayStr = getTodayDateStr();
+                const todayIsPlayable = todayStr >= DAILY_CHALLENGE_START;
+                dailyBtnEl.classList.toggle('show-new-badge', todayIsPlayable && !isDailyCompleted(todayStr));
+            }
       }
 
          function showMenu(){
@@ -2342,9 +2685,9 @@ h1{
               updateLevelLabel();
               updateShuffleWarning();
               resetZoomPan();
+              hideMenu();
               layoutCanvas();
               saveGameState();
-              hideMenu();
               checkLevelComplete();
               return;
           }
@@ -2473,11 +2816,31 @@ h1{
 
               showLoadingOverlay(loadingLabel);
               const shownAt = performance.now();
-              const MIN_LEVEL_START_MS = 320;
+              // The loading spinner is held for a minimum time so it never
+              // reads as a jarring instant flash - but that minimum only
+              // needs to be long enough to cover an actual synchronous
+              // board build. When today's board is already sitting in the
+              // Daily Challenge pre-build cache (see dailyBoardCache /
+              // precomputeDailyBoard), there's no real generation work
+              // happening at all, so holding the same long minimum would
+              // just be extra waiting for no reason. Kept at a small
+              // non-zero floor rather than 0 so the overlay still doesn't
+              // look like a broken flash-and-vanish.
+              const isCachedDaily = dailyChallengeActive && dailyChallengeDate && !!dailyBoardCache[dailyChallengeDate];
+              const MIN_LEVEL_START_MS = isCachedDaily ? 80 : 320;
               requestAnimationFrame(() => {
                   setTimeout(() => {
                       startNewGameNow();
-                      const remaining = MIN_LEVEL_START_MS - (performance.now() - shownAt);
+                      // Clamped on both ends: Math.max(0, ...) guards the
+                      // normal case (board built faster than the minimum
+                      // spinner time). The Math.min upper clamp guards
+                      // against a stalled/drifted monotonic clock making
+                      // (performance.now() - shownAt) come back negative,
+                      // which would otherwise inflate remaining far past
+                      // MIN_LEVEL_START_MS and hold the spinner for an
+                      // unbounded amount of time instead of just capping
+                      // it back at the intended minimum.
+                      const remaining = Math.min(MIN_LEVEL_START_MS, MIN_LEVEL_START_MS - (performance.now() - shownAt));
                       setTimeout(hideLoadingOverlay, Math.max(0, remaining));
                   }, 0);
               });
@@ -2507,6 +2870,23 @@ h1{
            }
        }
 
+       // Deep-copies a cached daily layout before handing it to gameplay.
+       // Gameplay mutates grid/paths in place (grid[r][c] = -1 on clear,
+       // per-arrow render caches written onto path objects, etc), so
+       // without cloning, reusing the SAME cached objects across attempts
+       // would corrupt the pristine copy after just one play. Cloning
+       // keeps dailyBoardCache[dateStr] untouched, so a retry of the same
+       // day after a game-over can reuse it too, instead of only the
+       // very first attempt getting the instant cached path.
+       function cloneDailyLayout(cached){
+           return {
+               rows: cached.rows,
+               cols: cached.cols,
+               grid: cached.grid.map(row => row.slice()),
+               paths: cached.paths.map(p => ({id: p.id, cells: p.cells.map(cell => cell.slice()), headDir: p.headDir}))
+           };
+       }
+
        function startNewGameNow() {
 
               applyLevelConfig();
@@ -2518,6 +2898,18 @@ h1{
               bumping = [];
               flashing = new Set();
               progressMade = false;
+
+              // Only reset the "1 ad per level" cap when this is genuinely
+              // a DIFFERENT level than last time (level complete, mode
+              // switch, level picker, new Daily Challenge date) - a retry
+              // of the same level (free retry, or the ad-unavailable
+              // fallback) reaches this same code path but must NOT give the
+              // player a second ad on that level.
+              const thisLevelKey = dailyChallengeActive ? ('daily:' + dailyChallengeDate) : (gameMode + ':' + currentLevel);
+              if(extraLifeAdLevelKey !== thisLevelKey){
+                  extraLifeAdUsedThisAttempt = false;
+                  extraLifeAdLevelKey = thisLevelKey;
+              }
               let layout;
               const cached = dailyChallengeActive ? dailyBoardCache[dailyChallengeDate] : null;
               if(cached){
@@ -2527,15 +2919,14 @@ h1{
                   // just set by applyLevelConfig() above from the same
                   // date-seeded config the cache was built with, but
                   // re-assert them defensively from the cached copy.
-                  ROWS = cached.rows;
-                  COLS = cached.cols;
-                  layout = {grid: cached.grid, paths: cached.paths};
-                  // Consumed - a later retry of the same day (after a
-                  // game-over) falls through to buildLayout() below and
-                  // regenerates the identical board from its seed, since
-                  // gameplay mutates grid/paths in place and would
-                  // otherwise corrupt the cached copy on replay.
-                  delete dailyBoardCache[dailyChallengeDate];
+                  const cloned = cloneDailyLayout(cached);
+                  ROWS = cloned.rows;
+                  COLS = cloned.cols;
+                  layout = {grid: cloned.grid, paths: cloned.paths};
+                  // Deliberately NOT deleted: the cache entry stays put
+                  // (see cloneDailyLayout above) so a later retry of the
+                  // same day after a game-over is instant too, not just
+                  // the first attempt.
               } else {
                   // fast: quality tradeoff (a few more short arrows) is well
                   // worth it here - this runs synchronously behind the
@@ -2585,9 +2976,25 @@ h1{
               if(typeof updateHardShuffleToggleBtn === 'function') updateHardShuffleToggleBtn();
               try{ localStorage.setItem(GRID_PREF_KEY, '0'); }catch(e){}
               resetZoomPan();
+              // hideMenu() must run BEFORE layoutCanvas(): it's what sets
+              // .zoomControls back to display:flex (showMenu() hides it -
+              // see showMenu()'s comment). layoutCanvas()'s getChromeHeight()
+              // measures .zoomControls' real on-screen height via
+              // getBoundingClientRect(), which reads 0 while it's still
+              // display:none. On the very first level start (menu -> tap
+              // mode/level -> straight into startNewGameNow with the menu
+              // never explicitly closed first) that used to leave
+              // getChromeHeight() under-counting the chrome height, so the
+              // board sized itself too tall and pushed the zoom/grid/
+              // shuffle buttons row down behind the bottom ad banner - only
+              // self-correcting once something else (like clearing that
+              // level) called layoutCanvas() again after .zoomControls was
+              // already visible. Calling hideMenu() first guarantees
+              // .zoomControls is already flex/visible the very first time
+              // layoutCanvas() measures it.
+              hideMenu();
               layoutCanvas();
               saveGameState();
-              hideMenu();
               levelStartTime = performance.now();
           }
 
@@ -3102,7 +3509,7 @@ h1{
                         Daily Challenge
                     </div>
                     <div style="font-size:11px;color:#777;margin-bottom:10px;text-align:center;">
-                        Playable: Aug 1 to today \u00B7 earn \uD83E\uDE99 per clear
+                        Playable: Jan 1 to today \u00B7 earn \uD83E\uDE99 per clear
                     </div>
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
                         <button id="dailyCalPrev" style="border:none;background:none;font-size:20px;cursor:pointer;color:#2c2f4a;padding:4px 10px;">\u2039</button>
@@ -3188,14 +3595,22 @@ h1{
             renderCalendar();
             popup.onclick = (e) => { if(e.target === popup) popup.remove(); };
 
-            // Pre-warm the rest of this week's playable, not-yet-completed
-            // boards in the background too, staggered so it doesn't all
-            // run in one blocking burst - the player is just browsing the
-            // calendar at this point, so this is free time to use. Skipped
-            // on low-end devices to keep memory/CPU use down; each date
-            // still generates fine on-demand the moment it's actually tapped.
+            // Pre-warm a small, bounded window of recent playable,
+            // not-yet-completed boards in the background too, staggered so
+            // it doesn't all run in one blocking burst - the player is
+            // just browsing the calendar at this point, so this is free
+            // time to use. Bounded to the most recent WARM_WINDOW_DAYS
+            // days (not the entire history since launch) - getDailyChallengeDates()
+            // grows by one every single day the game is live, and warming
+            // the whole thing would queue up more and more background
+            // builds forever. Skipped on low-end devices to keep
+            // memory/CPU use down; each date still generates fine
+            // on-demand the moment it's actually tapped.
             if(!isLowEndDevice()){
-                const toWarm = getDailyChallengeDates().filter(d => !dailyBoardCache[d] && !isDailyCompleted(d));
+                const WARM_WINDOW_DAYS = 7;
+                const toWarm = getDailyChallengeDates()
+                    .slice(-WARM_WINDOW_DAYS)
+                    .filter(d => !dailyBoardCache[d] && !isDailyCompleted(d));
                 toWarm.forEach((d, i) => setTimeout(() => precomputeDailyBoard(d), 150 * (i + 1)));
             }
         }
@@ -3488,7 +3903,12 @@ h1{
     // cleanup - only cells vs already-FINISHED paths are checked against grid.
     function growCandidate(sr, sc){
       const cells = [[sr,sc]];
-      const occupied = new Set([sr+','+sc]);
+      // Integer cell keys (r*COLS+c) instead of string concatenation
+      // ('r,c') - same Set membership semantics, but avoids allocating a
+      // new string and hashing it on every single occupancy check. This
+      // function runs on every step of every generation attempt (hundreds
+      // of attempts per board build), so the per-call cost compounds fast.
+      const occupied = new Set([sr*COLS+sc]);
       let lastDir = null;
 
       function touchesSelf(nr, nc, r, c){
@@ -3496,22 +3916,28 @@ h1{
           const d = DIRS[name];
           const ar = nr+d.dy, ac = nc+d.dx;
           if(ar===r && ac===c) continue; // the connecting cell we just came from - always fine
-          if(occupied.has(ar+','+ac)) return true;
+          if(occupied.has(ar*COLS+ac)) return true;
         }
         return false;
       }
 
-      // How many of (r,c)'s orthogonal neighbours are still free, given a
-      // hypothetical extra set of cells this path is about to occupy. Used
-      // to spot moves that would wall a free cell in on every side.
-      function freeNeighborCount(r, c, hypotheticalOccupied){
+      // How many of (r,c)'s orthogonal neighbours are still free, treating
+      // extraOccupiedKey as one additional hypothetically-occupied cell on
+      // top of the real `occupied` set. Used to spot moves that would wall
+      // a free cell in on every side. Takes the single extra key directly
+      // instead of a whole cloned Set (see call site below) - identical
+      // membership test, but skips allocating and copying a new Set with
+      // every one of this path's cells into it on every single candidate
+      // direction checked, every step, every attempt.
+      function freeNeighborCount(r, c, extraOccupiedKey){
         let count = 0;
         for(const name of DIR_NAMES){
           const d = DIRS[name];
           const ar = r+d.dy, ac = c+d.dx;
           if(ar<0||ar>=ROWS||ac<0||ac>=COLS) continue;
           if(grid[ar][ac] !== -1) continue;
-          if(hypotheticalOccupied.has(ar+','+ac)) continue;
+          const key = ar*COLS+ac;
+          if(key === extraOccupiedKey || occupied.has(key)) continue;
           count++;
         }
         return count;
@@ -3526,7 +3952,7 @@ h1{
           const nr = r+d.dy, nc = c+d.dx;
           if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
           if(grid[nr][nc] !== -1) continue;               // occupied by an earlier, finished path
-          if(occupied.has(nr+','+nc)) continue;            // occupied by this same path
+          if(occupied.has(nr*COLS+nc)) continue;            // occupied by this same path
           if(lastDir && name === OPPOSITE[lastDir]) continue; // never backtrack
           if(touchesSelf(nr, nc, r, c)) continue;          // head/body must never touch itself
           // Hard mode (and Daily Challenge, which is built on Hard's
@@ -3546,15 +3972,15 @@ h1{
           // ban (a rare board might have no other option), just a strong
           // discouragement so the generator routes around holes instead of
           // creating them.
-          const hypothetical = new Set(occupied);
-          hypothetical.add(nr+','+nc);
+          const hypotheticalKey = nr*COLS+nc;
           for(const name2 of DIR_NAMES){
             const d2 = DIRS[name2];
             const ar = nr+d2.dy, ac = nc+d2.dx;
             if(ar<0||ar>=ROWS||ac<0||ac>=COLS) continue;
             if(grid[ar][ac] !== -1) continue;
-            if(hypothetical.has(ar+','+ac)) continue;
-            if(freeNeighborCount(ar, ac, hypothetical) === 0){
+            const acKey = ar*COLS+ac;
+            if(acKey === hypotheticalKey || occupied.has(acKey)) continue;
+            if(freeNeighborCount(ar, ac, hypotheticalKey) === 0){
               w *= 0.03;
               break;
             }
@@ -3585,7 +4011,7 @@ h1{
         for(const cand of candidates){ if(r2 < cand.w){ pick = cand; break; } r2 -= cand.w; }
 
         cells.push([pick.nr, pick.nc]);
-        occupied.add(pick.nr+','+pick.nc);
+        occupied.add(pick.nr*COLS+pick.nc);
         lastDir = pick.name;
       }
 
@@ -4153,6 +4579,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
 
     let leaving = [];
     let bumping = []; // arrows currently animating a "wrong move" bump: nudge forward until they touch whatever's blocking them, then spring back
+    let touchRipples = []; // small fading circles marking exactly where a tap landed on the board, for touch feedback
     // Checkpoint reshuffle transition: the old arrows spin/shrink/fade out,
     // then the new layout spins/grows/fades in, instead of an instant cut.
     // null when no reshuffle animation is in progress.
@@ -4313,7 +4740,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
         // (covering both that queued-event risk and the shuffle animation
         // itself) so a stray touch can't cost a life on an arrow that
         // wasn't there when they actually tapped.
-        inputBlockedUntil = performance.now() + shuffleAnim.duration + 400;
+        blockInputFor(shuffleAnim.duration + 400);
 
         // Show this shortly after the reshuffle starts. The just-cleared
         // arrow keeps animating on top of the shuffle in draw(), so the
@@ -4388,11 +4815,29 @@ function buildLayout(fast, timeBudgetOverrideMs){
   // cellSize, breaking the cancellation this normalization depends on and
   // causing speed to visibly drift over the course of a level.
   let referenceCellSize = 0;
+  const AD_CLEARANCE_TOP_PX = 12;
+  const AD_CLEARANCE_BOTTOM_PX = 28;
   function getReferenceCellSize(){
-    const adBannerSpace = 2 * 50;
-    const availW = window.innerWidth * 0.97;
-    const availH = window.innerHeight * 0.72 - adBannerSpace;
-    return Math.floor(Math.min(availW / MODES.easy.cols, availH / MODES.easy.rows)) || cellSize;
+    const adBannerSpace = adBannerHeightTopPx + adBannerHeightBottomPx + AD_CLEARANCE_TOP_PX + AD_CLEARANCE_BOTTOM_PX;
+    const availW = window.innerWidth * 0.99;
+    // Subtracts the real measured height of the top bar + zoom controls
+    // row + flex gaps (getChromeHeight()) rather than a blind ratio, so
+    // the board can grow to fill the screen without ever pushing those
+    // rows off-screen or behind the bottom ad banner. Small fixed buffer
+    // on top for breathing room. Kept in sync with layoutCanvas() below -
+    // see the comment above referenceCellSize for why these two must match.
+    const availH = window.innerHeight - adBannerSpace - getChromeHeight() - 8;
+    // Height budget is divided by (rows + 0.9), not just rows: the canvas
+    // draws its own internal header band above row 0 that's 0.9 cells
+    // tall (see layoutCanvas()'s TOP_BAR / boardH and cellCenter()'s own
+    // TOP_BAR) - actual on-screen board height is cellSize*(rows+0.9), not
+    // cellSize*rows. Dividing by rows alone let cellSize come out too big
+    // whenever height was the binding constraint, so boardH silently
+    // overshot availH by up to ~0.9 cells - most visible on Easy (few
+    // rows -> that 0.9-cell header is a bigger fraction of the total),
+    // which is exactly where this was reported: the zoom/grid/shuffle row
+    // ended up pushed down behind the bottom ad banner.
+    return Math.floor(Math.min(availW / MODES.easy.cols, availH / (MODES.easy.rows + 0.9))) || cellSize;
   }
 
   function cellCenter(r,c){
@@ -4404,11 +4849,12 @@ function buildLayout(fast, timeBudgetOverrideMs){
     ];
 }
 
-  function drawDotGrid(){
+  function drawDotGrid(targetCtx){
+    targetCtx = targetCtx || ctx;
 
     const rDot = Math.max(1, cellSize*0.045);
 
-    ctx.fillStyle = cachedDotColor || 'rgba(44,47,74,0.25)';
+    targetCtx.fillStyle = cachedDotColor || 'rgba(44,47,74,0.25)';
     // Dots sit at cell centers (same coordinates cellCenter() uses for
     // drawing arrows) so the background texture lines up with the paths
     // the arrows actually travel along. Drawn across every cell, not just
@@ -4420,15 +4866,15 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // pair per dot (same pixels, far fewer canvas calls - this loop runs
     // every animation frame, and on a large Hard board that's 200+
     // individual fills per frame otherwise).
-    ctx.beginPath();
+    targetCtx.beginPath();
     for(let r=0; r<ROWS; r++){
       for(let c=0; c<COLS; c++){
         const [cx, cy] = cellCenter(r,c);
-        ctx.moveTo(cx + rDot, cy);
-        ctx.arc(cx, cy, rDot, 0, Math.PI*2);
+        targetCtx.moveTo(cx + rDot, cy);
+        targetCtx.arc(cx, cy, rDot, 0, Math.PI*2);
       }
     }
-    ctx.fill();
+    targetCtx.fill();
   }
 
   // cumulative arc-length along a path's cell centers, for continuous "slide along the path" motion
@@ -4559,6 +5005,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
     terracottaTile: 'Terracotta'
   };
   const patternCache = new Map(); // key: `${type}_${tileSizeRounded}` -> CanvasPattern
+  let _lastPatternCacheCellSize = null; // see the clear() call in layoutCanvas()
 
   // ===== Board Themes (Theme Store) =====
   // Separate from arrow patterns - these recolor the board background/dot
@@ -4583,7 +5030,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
   // they can all be tried out before real costs/gating are finalized.
   // Flip this to false (or just delete the block that uses it below) once
   // ready to gate themes behind coins for real.
-  const TESTING_UNLOCK_ALL_THEMES = true;
+  const TESTING_UNLOCK_ALL_THEMES = false;
 
   function lightenColor(hex, amt){ return lerpColor(hex, '#ffffff', amt); }
   function darkenColor(hex, amt){ return lerpColor(hex, '#000000', amt); }
@@ -5445,13 +5892,14 @@ function buildLayout(fast, timeBudgetOverrideMs){
 
   // draws a pipe strip through an arbitrary list of points, with the arrowhead
   // built from the direction of travel at the very front point
-  function drawStrip(pts, headVec, color){
+  function drawStrip(pts, headVec, color, targetCtx){
+    targetCtx = targetCtx || ctx;
     const thickness = cellSize * 0.17;  // width of arrow (thickened so patterns/textures actually read)
 
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = color;
-    ctx.lineWidth = thickness;
+    targetCtx.lineJoin = 'round';
+    targetCtx.lineCap = 'round';
+    targetCtx.strokeStyle = color;
+    targetCtx.lineWidth = thickness;
 
     const [ex,ey] = pts[pts.length-1];
     const tipX = ex;
@@ -5473,20 +5921,20 @@ function buildLayout(fast, timeBudgetOverrideMs){
       ? pts.slice(0, pts.length-1)
       : [[ex - headVec.dx*cellSize*0.5, ey - headVec.dy*cellSize*0.5]];
     const shaftPts = bodyPts.concat([[baseX, baseY]]);
-    ctx.beginPath();
-    shaftPts.forEach(([x,y], i) => { if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
-    ctx.stroke();
+    targetCtx.beginPath();
+    shaftPts.forEach(([x,y], i) => { if(i===0) targetCtx.moveTo(x,y); else targetCtx.lineTo(x,y); });
+    targetCtx.stroke();
 
     const headW = cellSize*0.34;   // narrower relative to length -> sharper point
     const angle = Math.atan2(headVec.dy, headVec.dx);
     const perpX = -Math.sin(angle)*headW/2;
     const perpY =  Math.cos(angle)*headW/2;
 
-    ctx.beginPath();
-    ctx.moveTo(tipX, tipY);
-    ctx.lineTo(baseX+perpX, baseY+perpY);
-    ctx.lineTo(baseX-perpX, baseY-perpY);
-    ctx.closePath();
+    targetCtx.beginPath();
+    targetCtx.moveTo(tipX, tipY);
+    targetCtx.lineTo(baseX+perpX, baseY+perpY);
+    targetCtx.lineTo(baseX-perpX, baseY-perpY);
+    targetCtx.closePath();
     // Use a solid, slightly darker head color derived from the current
     // arrow pattern so the tip appears as a solid cap regardless of the
     // patterned shaft used for the body. Exception: a wrong-move/flashing
@@ -5494,13 +5942,27 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // exactly (fully red arrow) rather than falling back to the
     // pattern-derived tint, regardless of which pattern is selected.
     const headFill = (color === RED) ? RED : getArrowHeadSolidColorForType(getActiveArrowPatternType());
-    ctx.fillStyle = headFill;
-    ctx.fill();
+    targetCtx.fillStyle = headFill;
+    targetCtx.fill();
   }
 
-  function drawPathShape(path, color){
-    const pts = path.cells.map(([r,c]) => cellCenter(r,c));
-    drawStrip(pts, DIRS[path.headDir], color || PIPE_COLOR);
+  // Per-path cache of screen-space points, keyed on the cellSize they were
+  // computed for. cellSize only changes on resize/orientation-change
+  // (layoutCanvas), so in the overwhelmingly common case (no resize between
+  // frames) this skips rebuilding the same array via .map() on every single
+  // static arrow, every animation frame - pure allocation/GC pressure with
+  // an identical result each time. Falls back to a full recompute whenever
+  // cellSize has changed since the cache was made, so resizing/zooming the
+  // window still always draws at the correct size - this only ever skips
+  // work when the result would be byte-for-byte identical anyway.
+  function drawPathShape(path, color, targetCtx){
+    let pts = path._cachedPts;
+    if(!pts || path._cachedCellSize !== cellSize){
+      pts = path.cells.map(([r,c]) => cellCenter(r,c));
+      path._cachedPts = pts;
+      path._cachedCellSize = cellSize;
+    }
+    drawStrip(pts, DIRS[path.headDir], color || PIPE_COLOR, targetCtx);
   }
 
   // Full-board grid overlay (toggled by the Grid button). Lines run through
@@ -5508,10 +5970,11 @@ function buildLayout(fast, timeBudgetOverrideMs){
   // along - rather than around the boxy outline of the board cells, so the
   // grid reads as "this is the lane an arrow moves through" rather than
   // "this is a box drawn around it".
-  function drawFullGrid(){
-    ctx.save();
-    ctx.strokeStyle = 'rgba(77,99,255,0.35)';
-    ctx.lineWidth = Math.max(1, cellSize*0.02);
+  function drawFullGrid(targetCtx){
+    targetCtx = targetCtx || ctx;
+    targetCtx.save();
+    targetCtx.strokeStyle = 'rgba(77,99,255,0.35)';
+    targetCtx.lineWidth = Math.max(1, cellSize*0.02);
     const TOP_BAR = cellSize * 0.9;
 
     // One full-length line per arrow, drawn only along the axis the arrow
@@ -5523,21 +5986,21 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // path + one stroke() call instead of one beginPath/stroke pair per
     // arrow (same pixels, far fewer canvas calls per frame this overlay
     // is visible for).
-    ctx.beginPath();
+    targetCtx.beginPath();
     pathsMap.forEach(path => {
       const [r, c] = path.cells[path.cells.length - 1]; // head cell
       if(path.headDir === 'left' || path.headDir === 'right'){
         const y = TOP_BAR + r*cellSize + cellSize/2;
-        ctx.moveTo(0, y);
-        ctx.lineTo(COLS*cellSize, y);
+        targetCtx.moveTo(0, y);
+        targetCtx.lineTo(COLS*cellSize, y);
       } else {
         const x = c*cellSize + cellSize/2;
-        ctx.moveTo(x, TOP_BAR);
-        ctx.lineTo(x, TOP_BAR + ROWS*cellSize);
+        targetCtx.moveTo(x, TOP_BAR);
+        targetCtx.lineTo(x, TOP_BAR + ROWS*cellSize);
       }
     });
-    ctx.stroke();
-    ctx.restore();
+    targetCtx.stroke();
+    targetCtx.restore();
   }
 
   function easeInCubic(t){ return t*t*t; }
@@ -5576,27 +6039,98 @@ function buildLayout(fast, timeBudgetOverrideMs){
     return (clearCells + 0.5) * cellSize;
   }
 
-  function draw(now){
-    ctx.clearRect(0,0,boardW,boardH);
-    ctx.fillStyle = cachedBoardBg;
-    ctx.fillRect(0,0,boardW,boardH);
-    drawDotGrid();
-    if(showGrid) drawFullGrid();
+  // Checks whether anything the static layer bakes in (resting arrows,
+  // background, dot grid, grid overlay) has actually changed since the
+  // layer was last rebuilt. Deliberately cheap (a handful of
+  // reference/number/string comparisons) so it's fine to call once per
+  // draw() - the expensive part (redrawing every resting arrow) only runs
+  // when one of these has actually changed, not on every animation frame.
+  function staticLayerIsDirty(){
+    const patternType = getActiveArrowPatternType();
+    return {
+      dirty: (
+        pathsMap !== _staticCache.pathsMapRef ||
+        pathsMap.size !== _staticCache.pathsMapSize ||
+        bumping.length !== _staticCache.bumpingLen ||
+        flashing.size !== _staticCache.flashingSize ||
+        cellSize !== _staticCache.cellSize ||
+        showGrid !== _staticCache.showGrid ||
+        patternType !== _staticCache.patternType ||
+        cachedBoardBg !== _staticCache.boardBg ||
+        cachedDotColor !== _staticCache.dotColor
+      ),
+      patternType
+    };
+  }
 
+  function rebuildStaticLayer(patternType){
+    // Keep the offscreen canvas's backing-store size (and DPR transform)
+    // in sync with the main canvas so it composites pixel-for-pixel
+    // identical to drawing straight into the main canvas.
+    if(staticCanvas.width !== canvas.width || staticCanvas.height !== canvas.height){
+      staticCanvas.width = canvas.width;
+      staticCanvas.height = canvas.height;
+    }
+    const dpr = boardW > 0 ? canvas.width / boardW : 1;
+    staticCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    staticCtx.fillStyle = cachedBoardBg;
+    staticCtx.fillRect(0, 0, boardW, boardH);
+    drawDotGrid(staticCtx);
+    if(showGrid) drawFullGrid(staticCtx);
+
+    const bumpingIds = new Set(bumping.map(item => item.id));
+    const restFillStyle = getArrowFillStyle();
+    pathsMap.forEach(p => {
+      if(bumpingIds.has(p.id)) return; // drawn dynamically each frame instead, below
+      const color = flashing.has(p.id) ? RED : restFillStyle;
+      drawPathShape(p, color, staticCtx);
+    });
+
+    _staticCache.pathsMapRef = pathsMap;
+    _staticCache.pathsMapSize = pathsMap.size;
+    _staticCache.bumpingLen = bumping.length;
+    _staticCache.flashingSize = flashing.size;
+    _staticCache.cellSize = cellSize;
+    _staticCache.showGrid = showGrid;
+    _staticCache.patternType = patternType;
+    _staticCache.boardBg = cachedBoardBg;
+    _staticCache.dotColor = cachedDotColor;
+  }
+
+  function draw(now){
     if(shuffleAnim){
+      // Shuffle transition draws its own full custom scene (rotate/scale/
+      // fade old+new layouts) - left exactly as before, untouched by the
+      // static layer cache below, since it's a rare, short cosmetic
+      // transition where the caching wouldn't help anyway.
+      ctx.clearRect(0,0,boardW,boardH);
+      ctx.fillStyle = cachedBoardBg;
+      ctx.fillRect(0,0,boardW,boardH);
+      drawDotGrid();
+      if(showGrid) drawFullGrid();
       drawShuffleAnim(now);
     } else {
-      const bumpingIds = new Set(bumping.map(item => item.id));
-      const restFillStyle = getArrowFillStyle();
-      pathsMap.forEach(p => {
-        if(bumpingIds.has(p.id)) return; // drawn by the bump animation below instead
-        const color = flashing.has(p.id) ? RED : restFillStyle;
-        drawPathShape(p, color);
-      });
+      // Everything static (background, dot grid, grid overlay, resting
+      // arrows) is composited from a single cached offscreen image instead
+      // of being individually redrawn every frame. The cache is rebuilt
+      // only when the board actually changed since last frame - see
+      // staticLayerIsDirty() - so a full board's worth of resting arrows
+      // gets redrawn once per board change, not once per animation frame.
+      const {dirty, patternType} = staticLayerIsDirty();
+      if(dirty) rebuildStaticLayer(patternType);
+      ctx.drawImage(staticCanvas, 0, 0, boardW, boardH);
     }
 
     leaving = leaving.filter(item => {
-      const elapsed = now - item.startTime;
+      // Clamped to 0: on some devices the monotonic clock used for
+      // item.startTime and the rAF timestamp `now` can briefly disagree
+      // (clock drift/stall on certain chipsets/WebView builds), which
+      // would otherwise make elapsed go negative and t never reach 1 -
+      // an animation stuck on screen forever. now still advances frame
+      // to frame regardless, so clamping the floor here is enough for
+      // it to always resolve.
+      const elapsed = Math.max(0, now - item.startTime);
       const t = Math.min(1, elapsed / item.duration);
       const shiftProgress = item.fastStart ? easeOutCubic(t) : easeInCubic(t);
       const shift = item.total_extra_travel * shiftProgress;
@@ -5610,7 +6144,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // path until its tip touches whatever's blocking it, then springs back
     // to its original slot - staying red the whole time (and after).
     bumping = bumping.filter(item => {
-      const elapsed = now - item.startTime;
+      const elapsed = Math.max(0, now - item.startTime); // see clamp note in `leaving` above
       const t = Math.min(1, elapsed / item.duration);
       const shift = item.maxDist * Math.sin(Math.PI * t); // 0 -> maxDist -> 0
       const headVec = DIRS[item.path.headDir];
@@ -5619,7 +6153,34 @@ function buildLayout(fast, timeBudgetOverrideMs){
       return t < 1;
     });
 
-    if(leaving.length > 0 || bumping.length > 0 || shuffleAnim){
+    // Touch feedback: a small ring at the tap point that quickly expands
+    // and fades, so every touch feels acknowledged even when it lands
+    // close to (rather than exactly on) an arrow. Drawn as a white ring
+    // with a darker outline on either side of it so it stays visible
+    // against light board themes as well as dark ones.
+    touchRipples = touchRipples.filter(item => {
+      const elapsed = Math.max(0, now - item.startTime); // see clamp note in `leaving` above
+      const t = Math.min(1, elapsed / item.duration);
+      const radius = cellSize * (0.22 + 0.3 * t);
+      const alpha = 0.85 * (1 - t);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(item.x, item.y, radius, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(2, cellSize * 0.06);
+      ctx.strokeStyle = `rgba(0,0,0,${alpha * 0.35})`;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(item.x, item.y, radius, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(1, cellSize * 0.03);
+      ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255,255,255,${alpha * 0.3})`;
+      ctx.fill();
+      ctx.restore();
+      return t < 1;
+    });
+
+    if(leaving.length > 0 || bumping.length > 0 || shuffleAnim || touchRipples.length > 0){
       requestAnimationFrame(draw);
     } else {
       animFrameQueued = false;
@@ -5632,10 +6193,10 @@ function buildLayout(fast, timeBudgetOverrideMs){
   // the same way - a visible "shuffle" instead of an instant cut. Purely
   // cosmetic: grid/pathsMap still hold the OLD layout for gameplay purposes
   // until this finishes and performs the actual swap (input stays blocked
-  // the whole time via inputBlockedUntil, set when the animation started).
+  // the whole time via blockInputFor(), called when the animation started).
   function drawShuffleAnim(now){
     const anim = shuffleAnim;
-    const elapsed = now - anim.startTime;
+    const elapsed = Math.max(0, now - anim.startTime); // see clamp note in draw()'s `leaving` filter
     const progress = Math.min(1, elapsed / anim.duration);
     const restFillStyle = getArrowFillStyle();
     const cx = boardW/2, cy = boardH/2;
@@ -5669,7 +6230,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
       grid = anim.newGrid;
       pathsMap = anim.newPathsMap;
       shuffleAnim = null;
-      saveGameState();
+      requestSaveGameState();
     }
   }
 
@@ -5859,6 +6420,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
         dismissed = true;
 
         if(stopConfetti) stopConfetti();
+        clearTimeout(_dismissGraceTimer);
 
         popup.remove();
 
@@ -5875,10 +6437,15 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // before the player ever sees it. Desktop mouse clicks don't have
     // this problem since there's only ever one real click. 250ms is
     // well under any legitimate double-tap-to-dismiss timing.
-    const openedAt = performance.now();
-    const DISMISS_GRACE_MS = 250;
+    // Uses a setTimeout-driven flag rather than comparing two
+    // performance.now() reads - on a device where the monotonic clock
+    // drifts/stalls (see blockInputFor() for the same fix elsewhere),
+    // a timestamp-comparison grace period can stay true forever, which
+    // would make this popup permanently un-dismissable by tapping.
+    let dismissGraceActive = true;
+    const _dismissGraceTimer = setTimeout(() => { dismissGraceActive = false; }, 250);
     popup.addEventListener("click", () => {
-        if(performance.now() - openedAt < DISMISS_GRACE_MS) return;
+        if(dismissGraceActive) return;
         dismiss();
     });
 
@@ -5925,8 +6492,9 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // it needs an extra tappable button - "Watch Ad for +1 Life" - alongside
     // the existing "tap anywhere to retry" behavior. Tapping the button
     // itself must NOT also trigger the backdrop's retry handler, hence the
-    // stopPropagation() below.
-    function showGameOverPopup(retryCallback){
+    // stopPropagation() below. onWatchAd is optional so this popup still
+    // works anywhere it might be reused without an ad flow wired up.
+    function showGameOverPopup(retryCallback, onWatchAd){
 
     const old = document.getElementById("gamePopup");
     if(old) old.remove();
@@ -5974,10 +6542,6 @@ function buildLayout(fast, timeBudgetOverrideMs){
                 Touch anywhere to retry this level
             </div>
 
-            <!-- "Watch Ad for +1 Life" temporarily disabled until the real
-                 ad SDK is wired in (see loadBannerAds/showRewardedAd below).
-                 Re-enable this button once ads are added. -->
-            <!--
             <button id="watchAdLifeBtn" style="
                 background:#4d63ff;
                 border:none;
@@ -5989,8 +6553,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
                 width:100%;
                 cursor:pointer;
                 box-shadow:0 4px 10px rgba(77,99,255,.35);
-            ">🎬 Watch Ad for +1 Life</button>
-            -->
+            ">🎬 Watch Ad for +1 ❤️</button>
         </div>
     `;
 
@@ -6000,6 +6563,19 @@ function buildLayout(fast, timeBudgetOverrideMs){
     });
 
     document.body.appendChild(popup);
+
+    const watchBtn = document.getElementById("watchAdLifeBtn");
+    if(watchBtn){
+        if(onWatchAd){
+            watchBtn.addEventListener("click", (e) => {
+                e.stopPropagation(); // don't also fire the backdrop's retry handler
+                popup.remove();
+                onWatchAd();
+            });
+        } else {
+            watchBtn.style.display = "none"; // no ad flow wired up here - hide rather than show a dead button
+        }
+    }
 
 }
 
@@ -6055,7 +6631,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
 
     // Daily Challenge clear: no next-level progression - award a gold coin
     // (only once per date), mark the date complete for the calendar, then
-    // return to the main menu. Retrying the SAME day after a game-over
+    // route the player onward. Retrying the SAME day after a game-over
     // regenerates the identical seeded board, so a completed date can still
     // be replayed for fun without earning a second coin.
     function completeDailyChallenge(){
@@ -6068,6 +6644,17 @@ function buildLayout(fast, timeBudgetOverrideMs){
         const coinHtml = alreadyDone
             ? '<div style="margin-top:10px;font-size:13px;opacity:0.75;">Already completed \u2014 no extra coin</div>'
             : '<div style="margin-top:10px;font-size:15px;font-weight:bold;color:#c9971c;">\uD83E\uDE99 +1 Gold Coin!</div>';
+
+        // Where to send the player next, so finishing one day's challenge
+        // doesn't just drop them back to the main menu while other days
+        // are still sitting there unfinished.
+        const nextDate = new Date(dateStr + 'T00:00:00Z');
+        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+        const nextDateStr = toDateStr(nextDate);
+        const nextDayIsPlayable = nextDateStr <= getTodayDateStr();
+        const nextDayIncomplete = nextDayIsPlayable && !isDailyCompleted(nextDateStr);
+        const anyIncompleteDateLeft = !areAllDailyChallengesCompleted();
+
         showPopup(
             "Daily Challenge Complete!",
             getStartingLevelAnimationHtml("Nice work!" + coinHtml),
@@ -6075,7 +6662,25 @@ function buildLayout(fast, timeBudgetOverrideMs){
                 dailyChallengeActive = false;
                 dailyChallengeDate = null;
                 clearGameState();
-                showMenu();
+                if(nextDayIncomplete){
+                    // Jump straight into tomorrow's challenge (e.g. finish
+                    // Aug 25 -> Aug 26 if it's not done yet) instead of
+                    // dropping back to the menu - keeps a play session
+                    // moving through consecutive days on its own.
+                    startDailyChallenge(nextDateStr);
+                } else if(anyIncompleteDateLeft){
+                    // Tomorrow's either not out yet or already done, but
+                    // some OTHER day (most likely an older, skipped one) is
+                    // still unfinished - keep the player on the calendar
+                    // instead of the menu so they can pick it up right
+                    // away, rather than having to find the Daily button
+                    // again.
+                    showMenu();
+                    showDailyCalendarPopup(dateStr);
+                } else {
+                    // Every playable day is done - nothing left to jump to.
+                    showMenu();
+                }
             },
             true,
             1400
@@ -6113,17 +6718,25 @@ function buildLayout(fast, timeBudgetOverrideMs){
     }
   }
 
-  // Finds which arrow a tap should register on, based on actual proximity
-  // to that arrow's drawn shape (the line through its cells plus its
-  // head) - not just "anywhere inside its grid cell" the way it worked
-  // before. A touch has to land within ARROW_HIT_RADIUS_FACTOR of a
-  // cell's size from the arrow's own line to count, so a tap that's
-  // genuinely far from any arrow (e.g. dead center of a big empty gap)
-  // never grabs one just because it happened to fall inside that arrow's
-  // occupied cell. If two different arrows both have a point within that
-  // radius (e.g. a tap landing in the gap between two paths running close
-  // together), it's ambiguous which one was meant, so that case is
-  // treated as a miss rather than guessing.
+  // Finds which arrow a tap should register on.
+  //
+  // Primary check: which grid cell was actually touched. If that cell
+  // belongs to an arrow (grid[row][col] holds that arrow's id), it's a
+  // guaranteed, unambiguous hit - this covers the ENTIRE cell, including
+  // its corners. This matters because a cell's corner sits roughly
+  // 0.71 * cellSize from its center, while the old proximity-only check
+  // used a hit radius of just 0.45 * cellSize measured from the arrow's
+  // center-line - so a touch near the edge/corner of a short (single- or
+  // two-cell) arrow's own square could fall outside that circle and be
+  // read as a miss even though the finger was genuinely on the arrow.
+  //
+  // Fallback: if the touched cell is empty, we still allow "close to the
+  // arrow" to count - measuring distance to the nearest arrow's drawn
+  // line/head and accepting anything within ARROW_HIT_RADIUS_FACTOR of a
+  // cell's size. When two different arrows both have a point within that
+  // radius (paths running close together), we don't treat that as an
+  // unresolvable miss - we just take whichever arrow's line the touch is
+  // actually closest to.
   // Purely an input-handling change - doesn't touch board
   // generation/solvability or which cells logically belong to which arrow.
   const ARROW_HIT_RADIUS_FACTOR = 0.45; // fraction of a cell's size
@@ -6139,10 +6752,24 @@ function buildLayout(fast, timeBudgetOverrideMs){
   }
 
   function findTappedArrowId(x, y){
+    // Direct cell hit - covers the whole occupied cell, corners included.
+    // Must mirror cellCenter()'s TOP_BAR offset (the header space reserved
+    // above row 0) or the row math is off by roughly a full cell, which is
+    // what was causing a touch on one arrow to register on the arrow in
+    // the row below it.
+    const TOP_BAR = cellSize * 0.9;
+    const col = Math.floor(x / cellSize);
+    const row = Math.floor((y - TOP_BAR) / cellSize);
+    if(row >= 0 && row < ROWS && col >= 0 && col < COLS){
+      const cellId = grid[row][col];
+      if(cellId !== undefined && cellId !== -1) return cellId;
+    }
+
+    // Touched cell was empty - fall back to "close enough to a nearby
+    // arrow's line" so taps that land just off an arrow still register.
     const hitRadius = cellSize * ARROW_HIT_RADIUS_FACTOR;
     let bestId = null;
     let bestDist = hitRadius;
-    const idsInRange = new Set();
 
     pathsMap.forEach((path, id) => {
       const pts = path.cells.map(([r,c]) => cellCenter(r,c));
@@ -6157,22 +6784,22 @@ function buildLayout(fast, timeBudgetOverrideMs){
         }
       }
 
-      if(dist <= hitRadius){
-        idsInRange.add(id);
-        if(dist < bestDist){
-          bestDist = dist;
-          bestId = id;
-        }
+      // Always take the closest arrow within range, even if another arrow
+      // also happens to have a point within the hit radius - see comment
+      // above findTappedArrowId for why we stopped rejecting these as
+      // ambiguous.
+      if(dist <= hitRadius && dist < bestDist){
+        bestDist = dist;
+        bestId = id;
       }
     });
 
-    if(idsInRange.size > 1) return null; // ambiguous - two different arrows both close enough
     return bestId;
   }
 
   function handleTapInner(clientX, clientY){
 
-    if(performance.now() < inputBlockedUntil) return;
+    if(inputBlocked) return;
 
     const rect = canvas.getBoundingClientRect();
     // rect reflects the current CSS zoom transform (its width/height are
@@ -6180,6 +6807,12 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // own unscaled coordinate space before dividing by cellSize.
     const x = (clientX - rect.left) * (boardW / rect.width);
     const y = (clientY - rect.top) * (boardH / rect.height);
+
+    // Visual feedback: a small white transparent circle right where the
+    // finger landed, so a touch that's close to an arrow (rather than
+    // dead-on) still feels acknowledged instead of feeling ignored.
+    touchRipples.push({x, y, startTime: performance.now(), duration: 260});
+    requestDraw();
 
     const id = findTappedArrowId(x, y);
     if(id === null) return;
@@ -6191,8 +6824,18 @@ function buildLayout(fast, timeBudgetOverrideMs){
       playSound(errorSound);
       // Wrong-touch haptic feedback is gated by the selected sound mode.
       triggerHapticFeedback();
-    lives = Math.max(0, lives - 1); // clamp - see updateLives() for why this matters
-  updateLives();
+
+    // An arrow already in `flashing` was already charged a life for this
+    // exact mistake earlier in the current attempt (flashing only clears
+    // when the arrow is legitimately removed from the board - see
+    // flashing.delete(id) below). Tapping the same still-blocked arrow
+    // again is the same mistake repeated, not a new one, so it shouldn't
+    // cost a second life - it still gets the same bump/error feedback.
+    const alreadyChargedForThisArrow = flashing.has(id);
+    if(!alreadyChargedForThisArrow){
+      lives = Math.max(0, lives - 1); // clamp - see updateLives() for why this matters
+      updateLives();
+    }
     flashing.add(id);
 
     // Guards against a rapid duplicate tap (a genuine fast double-tap, or
@@ -6202,7 +6845,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
     // feedback has even finished. Without this, lives could skip straight
     // past 0 to -1, crashing updateLives() before the game-over check
     // below ever runs.
-    inputBlockedUntil = performance.now() + 300;
+    blockInputFor(300);
 
     // "wrong move" feedback: nudge the arrow forward until its tip touches
     // whatever's blocking it, then spring it back to its original slot.
@@ -6226,17 +6869,51 @@ function buildLayout(fast, timeBudgetOverrideMs){
 
         setTimeout(()=>{
 
-            showGameOverPopup(() => {
-                gameStarted = true;
-                startNewGame(false, "Reloading the level");
-            });
+            showGameOverPopup(
+                () => { // free retry: tap-anywhere - fresh board, 3 lives
+                    gameStarted = true;
+                    startNewGame(false, "Reloading the level");
+                },
+                // "Watch Ad for +1 Life" - capped at one use per attempt.
+                // If the device is offline (for example mobile data/Wi-Fi
+                // is switched off), do NOT show the reward-ad button.
+                // In that case the player goes straight to the normal
+                // Game Over screen with only the retry option.
+                // navigator.onLine is the appropriate WebView signal for
+                // the Android data/Wi-Fi-off case and avoids offering an ad
+                // that cannot possibly load.
+                (extraLifeAdUsedThisAttempt || navigator.onLine === false) ? undefined : () => {
+                    // Resume THIS SAME board instead of the free retry's
+                    // fresh board+3-lives reset. grid/pathsMap/etc. are
+                    // still exactly as they were at the moment of the fatal
+                    // tap - clearGameState() above only cleared the
+                    // localStorage save key, it never touches the in-memory
+                    // board - so no rebuild is needed, just put one life
+                    // back and keep going.
+                    showRewardedAd(
+                        () => { // onReward
+                            extraLifeAdUsedThisAttempt = true; // enforce the once-per-attempt cap
+                            lives = 1;
+                            updateLives();
+                            gameStarted = true;
+                            requestSaveGameState();
+                            requestDraw();
+                        },
+                        () => { // onUnavailable - no ad ready (offline/no fill) -
+                            // fall back to the same free retry as tapping the backdrop
+                            gameStarted = true;
+                            startNewGame(false, "Reloading the level");
+                        }
+                    );
+                }
+            );
 
         },400);
 
         return;
     }
 
-    saveGameState();
+    requestSaveGameState();
     requestDraw();
 
     return;
@@ -6282,7 +6959,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
 
   requestDraw();
 
-  saveGameState();
+  requestSaveGameState();
 
   if(dailyChallengeActive){
       // Daily Challenge boards are intentionally fixed and never reshuffle.
@@ -6385,6 +7062,10 @@ function buildLayout(fast, timeBudgetOverrideMs){
     gridToggleBtn.classList.toggle('active', showGrid);
   }
   const hardShuffleToggleBtn = document.getElementById('hardShuffleToggleBtn');
+  let hardShuffleToggleUsed = false;
+  try{
+    hardShuffleToggleUsed = localStorage.getItem(HARD_SHUFFLE_TOGGLE_USED_KEY) === '1';
+  }catch(e){}
   function updateHardShuffleToggleBtn(){
     if(!hardShuffleToggleBtn) return;
     const visible = gameMode === 'hard' && !dailyChallengeActive;
@@ -6392,6 +7073,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
     hardShuffleToggleBtn.style.display = visible ? 'flex' : 'none';
     hardShuffleToggleBtn.disabled = locked;
     hardShuffleToggleBtn.classList.toggle('active', hardShuffleEnabled);
+    hardShuffleToggleBtn.classList.toggle('show-new-badge', !hardShuffleToggleUsed);
     hardShuffleToggleBtn.setAttribute('aria-pressed', hardShuffleEnabled ? 'true' : 'false');
     hardShuffleToggleBtn.title = locked
       ? 'Shuffle can only be changed before clearing an arrow'
@@ -6417,6 +7099,10 @@ function buildLayout(fast, timeBudgetOverrideMs){
     hardShuffleToggleBtn.onclick = () => {
       if(gameStarted && progressMade) return;
       hardShuffleEnabled = !hardShuffleEnabled;
+      if(!hardShuffleToggleUsed){
+        hardShuffleToggleUsed = true;
+        try{ localStorage.setItem(HARD_SHUFFLE_TOGGLE_USED_KEY, '1'); }catch(e){}
+      }
       updateHardShuffleToggleBtn();
       updateShuffleWarning();
       try{ localStorage.setItem(HARD_SHUFFLE_PREF_KEY, hardShuffleEnabled ? '1' : '0'); }catch(e){}
@@ -6539,20 +7225,39 @@ function buildLayout(fast, timeBudgetOverrideMs){
 
   function layoutCanvas(){
    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const adBannerSpace = 2 * 50; // matches --ad-banner-height reserved at top and bottom
-    // Side margin trimmed from 10% (0.90) to 3% (0.97) of the viewport
+    const adBannerSpace = adBannerHeightTopPx + adBannerHeightBottomPx + AD_CLEARANCE_TOP_PX + AD_CLEARANCE_BOTTOM_PX; // matches ad banner space plus the blank clearance kept around it
+    // Side margin trimmed from 3% (0.97) to 1% (0.99) of the viewport
     // width - was leaving more empty space on the left/right of the
     // board than needed. Must stay in sync with the same factor in
     // getReferenceCellSize() above (see the comment on referenceCellSize)
     // or the exit-animation speed normalization drifts out of sync.
-    const availW = window.innerWidth * 0.97;
-    // Subtract the banner space directly (not inside the 0.72 ratio) so the
-    // board shrinks by exactly the pixels the banners take up, leaving the
-      // zoomControls row (+, -, grid toggle) below the board still on
-    // screen instead of getting pushed off the bottom.
-    const availH = window.innerHeight * 0.72 - adBannerSpace;
-    cellSize = Math.floor(Math.min(availW/COLS, availH/ROWS));
+    const availW = window.innerWidth * 0.99;
+    // Subtract the banner space AND the real measured height of the top
+    // bar + zoom controls row + flex gaps (getChromeHeight()) - not a
+    // blind ratio - so the board grows to fill the screen while the
+    // zoomControls row (+, -, grid toggle, shuffle) always stays on
+    // screen above the bottom ad banner instead of getting pushed behind
+    // it. Small fixed buffer (8px) on top for breathing room. Must stay
+    // in sync with getReferenceCellSize().
+    const availH = window.innerHeight - adBannerSpace - getChromeHeight() - 8;
+    // Divide by (ROWS + 0.9), not ROWS - see the matching comment in
+    // getReferenceCellSize() above for why: boardH below is
+    // cellSize*(ROWS+0.9), not cellSize*ROWS, so the height half of this
+    // min() has to budget for that same 0.9-cell internal header or the
+    // resulting board overshoots availH.
+    cellSize = Math.floor(Math.min(availW/COLS, availH/(ROWS + 0.9)));
     referenceCellSize = getReferenceCellSize(); // frozen together with cellSize - see the comment above getReferenceCellSize()
+    // patternCache is keyed partly off cellSize-derived tile sizes (see
+    // buildPatternTile call sites) and never evicted entries on its own -
+    // every layoutCanvas() that lands on a new cellSize (ad banner
+    // resize/reload, orientation change, zoom) would otherwise leave the
+    // previous size's offscreen canvases/CanvasPatterns sitting in memory
+    // forever. Clearing here bounds it to whatever's actually on screen
+    // right now; harmless no-op cost when cellSize hasn't changed.
+    if(cellSize !== _lastPatternCacheCellSize){
+        patternCache.clear();
+        _lastPatternCacheCellSize = cellSize;
+    }
     boardW = cellSize*COLS;
     const TOP_BAR = cellSize * 0.9;
 
@@ -6578,46 +7283,402 @@ function buildLayout(fast, timeBudgetOverrideMs){
   }
 
   // =====================================================================
-  // AD INTEGRATION PLACEHOLDERS
-  // Real ad SDK code (AdMob, Unity Ads, etc.) will be merged in here later.
-  // Everything below is written so that dropping in the real calls only
-  // means editing the bodies of these functions - nothing else in the game
-  // needs to change.
+  // AD INTEGRATION (admob-plus-cordova)
+  // App ID lives in config.xml (APP_ID_ANDROID plugin variable). Unit IDs
+  // below are Arrow Puzzle's real production units from Ads_ID.
   // =====================================================================
 
-  // Banner ads: called once on startup. #adBannerTop / #adBannerBottom are
-  // plain fixed-position <div>s reserved for this (see CSS, and the
-  // adBannerSpace adjustment in layoutCanvas). Two common integration
-  // shapes:
-  //   1. SDK renders into the DOM -> put its markup/iframe inside these divs.
-  //   2. SDK renders its own native view on top of the WebView (typical for
-  //      Cordova plugins like admob-plus) -> leave these divs empty (or
-  //      hide them) and just call the SDK's own "show banner at top/bottom"
-  //      API here; the divs still reserve the layout space so the game
-  //      board doesn't sit underneath the native banner.
+  // Flip to true only while testing on a real device, and only after
+  // adding that device's ID to AD_TEST_DEVICE_IDS below - tapping/serving
+  // real ads to yourself is an AdMob policy violation and can suspend the
+  // account. MUST be false in anything uploaded to Play Console.
+  const AD_TEST_MODE = false;
+
+  // Diagnostic flag from crash debugging - keep false now that banners use
+  // offset:0 (pure overlay, see loadBannerAds) which avoids the webview
+  // reparenting that caused the original crash. Only flip true again if
+  // banners cause problems on a future device/Android version.
+  const AD_BANNERS_DISABLED_FOR_DIAGNOSIS = false;
+
+  const AD_UNIT_IDS = AD_TEST_MODE ? {
+      // Google's published test units - always safe to serve/tap.
+      banner:   'ca-app-pub-3940256099942544/6300978111',
+      rewarded: 'ca-app-pub-3940256099942544/5224354917'
+  } : {
+      banner:   'ca-app-pub-9836655516323886/9015482830',
+      rewarded: 'ca-app-pub-9836655516323886/5103780684'
+  };
+  // Device IDs to register as test devices when AD_TEST_MODE is true (the
+  // device's ID gets printed to logcat/chrome://inspect console the first
+  // time admob.start() runs on it - copy it in here on the next run).
+  const AD_TEST_DEVICE_IDS = [];
+
+  let adsSdkStarted = false;     // admob.start() resolved once, ever
+  let rewardedAd = null;         // currently loaded/loading RewardedAd, or null
+  let rewardedAdLoaded = false;  // true once rewardedAd's 'load' event has fired
+  let topBannerAd = null;
+  let bottomBannerAd = null;
+
+  // Real banner ads are NOT reliably 50px tall - the CSS defaults are
+  // just a starting guess for before any ad has loaded (and for dev/
+  // browser preview, where no real ad ever arrives). Some served
+  // creatives (this has been observed with certain house/promo ads, e.g.
+  // "Google One") render noticeably taller than the standard 320x50 unit
+  // even without requesting a different size, and because banners use
+  // offset:0 (pure overlay, see loadBannerAds) a taller-than-reserved ad
+  // just overlaps whatever content sits at the very top/bottom of the
+  // screen instead of pushing it out of the way - level header, hearts,
+  // the hamburger menu button up top, and the zoom/grid/shuffle controls
+  // plus the sound/bug badges down below. applyAdBannerHeights() is the
+  // single place that fixes this: it's called from the 'admob.banner.size'
+  // event (fired once an ad actually loads, and again on resize/rotation)
+  // with the ad's REAL measured height, updates the --ad-banner-height-top
+  // / --ad-banner-height-bottom CSS vars that every fixed-position element
+  // above/below the board already keys off of, and re-runs layoutCanvas()
+  // so the board itself reflows too. Until a real size event arrives,
+  // everything just uses the 50px CSS defaults, same as before.
+  //
+  // Keep the bottom reservation at the real measured banner height so the
+  // zoom/grid/shuffle row never overlaps a bottom ad.
+  const BOTTOM_AD_HEIGHT_SCALE = 1;
+  let adBannerHeightTopPx = 50;
+  let adBannerHeightBottomPx = 50;
+  function applyAdBannerHeights(rawPx){
+      if(!(rawPx > 0)) return;
+      // Sanity clamp - a garbled/unexpected event payload should never be
+      // able to blow the layout up (or collapse it to nothing) even if
+      // the plugin ever sends a bogus value.
+      rawPx = Math.max(40, Math.min(160, Math.round(rawPx)));
+      const topPx = rawPx;
+      const bottomPx = Math.max(32, Math.round(rawPx * BOTTOM_AD_HEIGHT_SCALE));
+      if(topPx === adBannerHeightTopPx && bottomPx === adBannerHeightBottomPx) return;
+      adBannerHeightTopPx = topPx;
+      adBannerHeightBottomPx = bottomPx;
+      document.documentElement.style.setProperty('--ad-banner-height-top', topPx + 'px');
+      document.documentElement.style.setProperty('--ad-banner-height-bottom', bottomPx + 'px');
+      if(typeof layoutCanvas === 'function') layoutCanvas();
+  }
+
+  // admob-plus-cordova only attaches the global `admob` object after
+  // 'deviceready' fires - same one-shot-event timing hazard as the
+  // back-button listener elsewhere in this file (deviceready may already
+  // have fired by the time this code runs on some devices). window.admob
+  // already existing is the signal it's safe to run immediately instead of
+  // waiting on an event that will never come again.
+  function onAdsSdkReady(cb){
+      if(window.admob){ cb(); return; }
+      document.addEventListener('deviceready', () => { if(window.admob) cb(); }, {once:true});
+      // In a plain browser / Claude artifact preview (no Cordova shell),
+      // 'deviceready' never fires at all, so the listener above would
+      // silently wait forever and loadBannerAds() would never even reach
+      // its "admob unavailable" branch - meaning the dev-preview
+      // placeholder banners further down would never show either. Give it
+      // 1.5s, then run cb() anyway; on a real device this is a harmless
+      // no-op since window.admob is already set long before this fires
+      // (the branch above already returned via the real 'deviceready'
+      // event by then).
+      setTimeout(() => { if(!window.admob) cb(); }, 1500);
+  }
+
+  // DEV-PREVIEW ONLY: when running outside Cordova (e.g. this file opened
+  // directly in a browser, or previewed as a Claude artifact) window.admob
+  // never exists, so real banners can never load. Fill the two reserved
+  // ad-banner strips with a plain "AD" placeholder purely so banner
+  // position/sizing/layout can be checked visually without building and
+  // installing an APK for every tweak. Never runs when window.admob is
+  // present (i.e. never on a real build with the plugin installed), so it
+  // has zero effect on the shipped app.
+  function showDevPlaceholderBanners(){
+      [['adBannerTop','TOP'], ['adBannerBottom','BOTTOM']].forEach(([id, label]) => {
+          const el = document.getElementById(id);
+          if(!el) return;
+          el.textContent = `AD (${label} banner placeholder \u2013 real ads only show in the installed app)`;
+          el.style.display = 'flex';
+          el.style.alignItems = 'center';
+          el.style.justifyContent = 'center';
+          el.style.background = 'repeating-linear-gradient(45deg,#c9c8d6,#c9c8d6 10px,#bdbcca 10px,#bdbcca 20px)';
+          el.style.color = '#2c2f4a';
+          el.style.fontSize = '11px';
+          el.style.fontWeight = '700';
+          el.style.letterSpacing = '0.5px';
+          el.style.border = '1px dashed #7a7d99';
+          el.style.padding = '0 6px';
+          el.style.textAlign = 'center';
+          el.style.overflow = 'hidden';
+      });
+      // Deliberately simulate a TALLER-than-default banner here (rather
+      // than leaving the 50px default) so the overlap-avoidance reflow
+      // (applyAdBannerHeights -> --ad-banner-height-top/bottom ->
+      // layoutCanvas) can actually be eyeballed in preview - this is
+      // exactly the scenario that broke on-device with some real ad
+      // creatives rendering taller than the standard 50px unit. Passing
+      // 90 here yields 90px top and bottom strips, matching the full
+      // real-device reservation. If the level
+      // header/hearts/menu button and the zoom/grid/shuffle/sound/bug
+      // buttons all still sit clear of these placeholder strips, they'll
+      // clear a real oversized ad on-device too.
+      applyAdBannerHeights(90);
+  }
+
+  // Banner ads: called once on startup. #adBannerTop / #adBannerBottom
+  // reserve the on-screen layout space (see CSS + the adBannerSpace
+  // adjustment in layoutCanvas) but stay empty - admob-plus renders banners
+  // as its own native views anchored to 'top'/'bottom', not as DOM content,
+  // so nothing needs to go inside those divs.
   function loadBannerAds(){
-    console.log('[ads] loadBannerAds() placeholder - wire up real ad SDK here');
+      onAdsSdkReady(async () => {
+          if(!window.admob){
+              console.warn('[ads] admob plugin unavailable - ads disabled (e.g. running outside Cordova)');
+              showDevPlaceholderBanners();
+              return;
+          }
+          try{
+              if(!adsSdkStarted){
+                  await admob.start();
+                  if(AD_TEST_MODE && AD_TEST_DEVICE_IDS.length){
+                      await admob.configure({ testDeviceIds: AD_TEST_DEVICE_IDS });
+                  }
+                  adsSdkStarted = true;
+
+                  // Fires once each banner actually loads (with its real
+                  // measured size), and again if it's resized (rotation,
+                  // an auto-refreshed replacement creative, etc). This is
+                  // the ONLY reliable way to know a served ad's true
+                  // height - it can differ from the requested/standard
+                  // size depending on what the network actually fills
+                  // with - so board/menu/button layout stays keyed off
+                  // this rather than an assumed constant. Registered once
+                  // (inside the !adsSdkStarted guard) since it's a
+                  // document-level listener, not tied to a specific
+                  // banner instance - the event's adId isn't reliably
+                  // matchable back to our top/bottom BannerAd instances,
+                  // so whichever fires (top or bottom) is treated as the
+                  // current best estimate for "a standard banner on this
+                  // device", and applyAdBannerHeights() derives BOTH the
+                  // top and bottom reserved heights from it.
+                  document.addEventListener('admob.banner.size', (evt) => {
+                      const size = (evt && evt.size) || (evt && evt.detail && evt.detail.size);
+                      if(!size) return;
+                      // size.height is already in dp, which is what CSS px
+                      // maps to 1:1 in this webview (viewport meta uses
+                      // width=device-width). Only fall back to converting
+                      // heightInPixels (raw device pixels) if dp height is
+                      // ever missing from the payload.
+                      const h = size.height || (size.heightInPixels && size.heightInPixels / (window.devicePixelRatio || 1));
+                      if(h){
+                          console.log('[ads] banner size event, height(dp)=', h);
+                          applyAdBannerHeights(h);
+                      }
+                  });
+              }
+
+              if(!AD_BANNERS_DISABLED_FOR_DIAGNOSIS){
+                  // offset:0 makes AdMob overlay the banner on top of the
+                  // webview instead of its default behavior of resizing/
+                  // pushing the webview to make room. The push behavior is
+                  // what reparents the webview into a different container
+                  // type, which crashes Cordova's own window-insets code
+                  // (ClassCastException: LinearLayout.LayoutParams cannot
+                  // be cast to FrameLayout.LayoutParams). Pure overlay never
+                  // touches the webview's container, so it avoids that
+                  // entirely - and fits fine since #adBannerTop/#adBannerBottom
+                  // already reserve this exact screen space in the layout.
+                  //
+                  // NOTE: deliberately NOT passing a `size` option anymore.
+                  // The {width:320,height:50} plain object used previously
+                  // is not what admob-plus-cordova's own BannerAdOptions
+                  // docs or usage examples ever pass - every official
+                  // example constructs BannerAd with only adUnitId/
+                  // position/offset and lets it default to the standard
+                  // banner size. A `size` value the native side doesn't
+                  // recognize isn't guaranteed to throw or fire 'loadfail'
+                  // - it can just be silently ignored (or hand back a
+                  // zero-size ad view), which looks exactly like "blank
+                  // space, nothing in logcat, rewarded ads unaffected"
+                  // (rewarded has no size concept at all, which is why
+                  // only banners broke). Dropping it to match the
+                  // documented default is the fix. Only add size back
+                  // using the AdSizeType enum (confirm it actually exists
+                  // on the installed plugin version first, e.g.
+                  // console.log(admob.AdSizeType) on device) if a
+                  // non-default size is ever needed.
+
+                  // Each banner gets its own try/catch - constructing/
+                  // showing one must never silently prevent the other from
+                  // being attempted (they used to share one try block, so a
+                  // thrown error on the top banner meant the bottom banner
+                  // never even got created).
+                  //
+                  // Explicit load(), and show() only once 'load' actually
+                  // fires - mirroring RewardedAd's working pattern below.
+                  // The docs' own usage example just calls show() directly
+                  // (it auto-loads), but keeping load()+on('load') here is
+                  // harmless and makes failures observable via 'loadfail'
+                  // instead of a show() that silently no-ops on an
+                  // unloaded ad. loadfail errors are now JSON.stringify'd
+                  // so the actual AdMob error code (e.g. no-fill vs
+                  // network vs invalid-request) shows up in logcat instead
+                  // of an opaque [object Object].
+                  try{
+                      // IMPORTANT: AdMob Plus assigns an internal native ID to
+                      // each MobileAd. Because both BannerAd instances use the same adUnitId,
+                      // V2 requires different stable IDs so the native side keeps
+                      // them as two separate banner instances.
+                      topBannerAd = new admob.BannerAd({
+                          id: 'top-banner',
+                          adUnitId: AD_UNIT_IDS.banner,
+                          position: 'top',
+                          offset: 0
+                      });
+                      topBannerAd.on('load', () => {
+                          console.log('[ads] top banner loaded');
+                          topBannerAd.show().catch(e => console.warn('[ads] top banner failed to show', e));
+                      });
+                      topBannerAd.on('loadfail', e => console.warn('[ads] top banner failed to load:', JSON.stringify(e)));
+                      topBannerAd.load().catch(e => console.warn('[ads] top banner load() rejected', e));
+                  }catch(e){
+                      console.warn('[ads] top banner failed to construct', e);
+                  }
+
+                  try{
+                      bottomBannerAd = new admob.BannerAd({
+                          id: 'bottom-banner',
+                          adUnitId: AD_UNIT_IDS.banner,
+                          position: 'bottom',
+                          offset: 0
+                      });
+                      bottomBannerAd.on('load', () => {
+                          console.log('[ads] bottom banner loaded');
+                          bottomBannerAd.show().catch(e => console.warn('[ads] bottom banner failed to show', e));
+                      });
+                      bottomBannerAd.on('loadfail', e => console.warn('[ads] bottom banner failed to load:', JSON.stringify(e)));
+                      bottomBannerAd.load().catch(e => console.warn('[ads] bottom banner load() rejected', e));
+                  }catch(e){
+                      console.warn('[ads] bottom banner failed to construct', e);
+                  }
+              }
+
+              preloadRewardedAd(); // have one ready ahead of the first Game Over
+          }catch(e){
+              console.warn('[ads] loadBannerAds failed', e);
+          }
+      });
+  }
+
+  // Keeps one RewardedAd loaded ahead of time so tapping "Watch Ad for +1
+  // Life" doesn't have to wait on a network load. Safe to call repeatedly -
+  // no-ops while a load is already in flight or already sitting loaded.
+  function preloadRewardedAd(){
+      if(!window.admob || rewardedAd) return;
+      const ad = new admob.RewardedAd({ adUnitId: AD_UNIT_IDS.rewarded });
+      ad.on('load', () => { rewardedAdLoaded = true; });
+      ad.on('loadfail', e => {
+          console.warn('[ads] rewarded preload failed', e);
+          if(rewardedAd === ad){ rewardedAd = null; rewardedAdLoaded = false; }
+      });
+      ad.load().catch(e => {
+          console.warn('[ads] rewarded load() rejected', e);
+          if(rewardedAd === ad){ rewardedAd = null; rewardedAdLoaded = false; }
+      });
+      rewardedAd = ad;
   }
 
   // Rewarded ad: called when the player taps "Watch Ad for +1 Life" on the
-  // Game Over popup. onReward() must ONLY be called once the ad SDK
-  // confirms the ad was watched to completion (e.g. AdMob's
-  // onUserEarnedReward callback) - never on a failed load or a skipped ad.
-  // onUnavailable() should be called if no ad could be shown at all (not
-  // loaded / network error), so the UI can fall back gracefully.
+  // Game Over popup. onReward() is ONLY called from the 'reward' event -
+  // AdMob's own signal that the ad was watched to completion - never on a
+  // skipped/closed-early ad. onUnavailable() covers everything else (no
+  // fill, load/show failure, or a dismissed ad that never earned a reward).
   function showRewardedAd(onReward, onUnavailable){
-    console.log('[ads] showRewardedAd() placeholder - wire up real ad SDK here');
-    // TEMPORARY until the real SDK is merged in: auto-grants the reward
-    // immediately so the rest of the extra-life flow can be tested end to
-    // end. Delete this line once a real onReward()/onUnavailable() call is
-    // wired to the ad SDK's callbacks.
-    onReward();
+      if(!window.admob){
+          onUnavailable();
+          return;
+      }
+
+      const runShow = (ad) => {
+          let earned = false;
+          ad.on('reward', () => { earned = true; });
+          ad.on('dismiss', () => {
+              if(rewardedAd === ad){ rewardedAd = null; rewardedAdLoaded = false; }
+              preloadRewardedAd(); // line up the next one immediately
+              if(earned) onReward(); else onUnavailable();
+          });
+          ad.show().catch(e => {
+              console.warn('[ads] rewarded show failed', e);
+              if(rewardedAd === ad){ rewardedAd = null; rewardedAdLoaded = false; }
+              onUnavailable();
+          });
+      };
+
+      if(rewardedAd && rewardedAdLoaded){
+          runShow(rewardedAd);
+          return;
+      }
+
+      // Not preloaded yet (first Game Over before the background preload
+      // finished, or a previous preload attempt failed) - load on demand.
+      const ad = rewardedAd || new admob.RewardedAd({ adUnitId: AD_UNIT_IDS.rewarded });
+      rewardedAd = ad;
+      ad.on('load', () => { rewardedAdLoaded = true; runShow(ad); });
+      ad.on('loadfail', e => {
+          console.warn('[ads] rewarded load failed', e);
+          rewardedAd = null;
+          rewardedAdLoaded = false;
+          onUnavailable();
+      });
+      if(!rewardedAdLoaded){
+          ad.load().catch(e => {
+              console.warn('[ads] rewarded load() rejected', e);
+              rewardedAd = null;
+              onUnavailable();
+          });
+      }
   }
 
         // Must run before anything else touches the heartbeat flag - detects
         // whether the previous session was killed by the OS (ANR/OOM) rather
         // than exited cleanly, and offers to send a delayed report for it.
         checkForAbnormalPreviousSession();
+
+        // =====================================================================
+        // ONE-TIME FORCED PROGRESS RESET
+        // Every player goes back to level 1 with this release - level
+        // progress, coins, unlocked patterns/themes, streak, best times,
+        // daily-challenge completion, and any in-progress board are all
+        // wiped, same as a genuinely fresh install. Gated on
+        // FORCE_RESET_VERSION so it fires exactly ONCE per device: the
+        // very first launch after this update wipes everything and stamps
+        // FORCE_RESET_KEY, so every launch after that (including future
+        // app updates that don't bump this constant) is a normal no-op.
+        // MUST run before loadProgress()/loadCoins()/loadThemeState()/
+        // loadBestTimes()/loadGameState() below - those read the exact
+        // keys being cleared here, so ordering matters.
+        // To force another reset for everyone in a future release, bump
+        // FORCE_RESET_VERSION to a new value (e.g. '2') - do NOT reuse a
+        // version string already shipped, or devices that already saw
+        // that version won't be reset again.
+        const FORCE_RESET_VERSION = '1';
+        const FORCE_RESET_KEY = 'arrowPuzzleForceResetVersion';
+        try{
+            if(localStorage.getItem(FORCE_RESET_KEY) !== FORCE_RESET_VERSION){
+                [PROGRESS_KEY, SAVE_KEY, COINS_KEY, THEME_KEY, STREAK_KEY, BEST_TIMES_KEY, DAILY_KEY].forEach(k => {
+                    try{ localStorage.removeItem(k); }catch(e){}
+                });
+                localStorage.setItem(FORCE_RESET_KEY, FORCE_RESET_VERSION);
+            }
+        }catch(e){}
+
+        // Captured BEFORE loadProgress() ever runs: PROGRESS_KEY is only
+        // ever written by saveProgress() (see its declaration), so its
+        // absence here means this device has never made any progress -
+        // i.e. this is a genuinely first-ever launch, not just "no saved
+        // in-progress board" (which loadGameState()/SAVE_KEY tracks
+        // separately and gets wiped far more often, e.g. on level clear).
+        // The forced reset above (when it fires) also clears PROGRESS_KEY,
+        // so a reset device is correctly treated as "new" here too and
+        // gets the Welcome overview instead of "What's New" - appropriate
+        // since its progress genuinely now matches a fresh install.
+        let isNewInstall = false;
+        try{ isNewInstall = !localStorage.getItem(PROGRESS_KEY); }catch(e){}
 
         loadProgress();
         loadBestTimes();
@@ -6841,6 +7902,67 @@ function buildLayout(fast, timeBudgetOverrideMs){
           return pool[dayOfYear % pool.length];
       }
 
+      // ---- Smart notification timing ----
+      // Learns from when the player actually TAPS a reminder notification
+      // (not just when they happen to open the app) and eases tomorrow's
+      // time for that same slot toward the tap time - halfway each time,
+      // so one unusual day doesn't yank the schedule around, but a
+      // consistent habit (e.g. always opening the evening reminder around
+      // 8:15pm) gradually pulls the slot to match it.
+      //
+      // Each slot has a base time (today's original fixed times) and a
+      // window around it - a tap has to land inside that window to count
+      // as a real signal for THIS slot. Without that guard, tapping the
+      // morning notification at 9pm (e.g. after a day away from the
+      // phone) would drag the "morning" slot into the evening, which
+      // isn't what actually happened - the player wasn't seeing it as a
+      // morning reminder anymore, just clearing a stray notification.
+      const NOTIF_SLOT_WINDOWS = {
+          1: { baseHour: 9,  baseMinute: 0, minMinutes: 6*60,  maxMinutes: 13*60 },  // morning: 6am - 1pm
+          2: { baseHour: 18, baseMinute: 0, minMinutes: 13*60, maxMinutes: 22*60 },  // evening: 1pm - 10pm
+          3: { baseHour: 22, baseMinute: 0, minMinutes: 19*60, maxMinutes: 23*60+59 } // night: 7pm - midnight
+      };
+      const NOTIF_LEARNED_TIMES_KEY = 'arrowPuzzleNotifLearnedTimes';
+
+      function getLearnedTimes(){
+          try{
+              const raw = localStorage.getItem(NOTIF_LEARNED_TIMES_KEY);
+              return raw ? JSON.parse(raw) : {};
+          }catch(e){ return {}; }
+      }
+
+      function getSlotTime(id){
+          const slot = NOTIF_SLOT_WINDOWS[id];
+          if(!slot) return { hour: 9, minute: 0 };
+          const learned = getLearnedTimes();
+          const t = learned[id];
+          return t && typeof t.hour === 'number' && typeof t.minute === 'number'
+              ? t
+              : { hour: slot.baseHour, minute: slot.baseMinute };
+      }
+
+      // Called when the player taps a reminder notification. tapDate is
+      // the real clock time they tapped it (i.e. now).
+      function learnNotificationTapTime(id, tapDate){
+          const slot = NOTIF_SLOT_WINDOWS[id];
+          if(!slot) return; // not one of the 3 learnable reminder slots (e.g. the update-available notification)
+
+          const tapMinutes = tapDate.getHours() * 60 + tapDate.getMinutes();
+          if(tapMinutes < slot.minMinutes || tapMinutes > slot.maxMinutes) return; // outside this slot's window - ignore as an outlier
+
+          const current = getSlotTime(id);
+          const currentMinutes = current.hour * 60 + current.minute;
+          const newMinutes = Math.round((currentMinutes + tapMinutes) / 2); // ease halfway toward today's tap
+          const newTime = { hour: Math.floor(newMinutes / 60), minute: newMinutes % 60 };
+
+          try{
+              const learned = getLearnedTimes();
+              learned[id] = newTime;
+              localStorage.setItem(NOTIF_LEARNED_TIMES_KEY, JSON.stringify(learned));
+          }catch(e){}
+      }
+
+
       // If the player is close to unlocking a new arrow pattern, that's a
       // far more compelling hook than a generic "come play" line - so it
       // takes priority over the rotating pool whenever it applies. Uses
@@ -6879,15 +8001,18 @@ function buildLayout(fast, timeBudgetOverrideMs){
       function buildReminderNotifications(){
           const progressMsg = getPatternProgressMessage();
           const streakMsg = getStreakMorningMessage();
+          const morningTime = getSlotTime(1);
+          const eveningTime = getSlotTime(2);
+          const nightTime = getSlotTime(3);
           return [
               // Streak takes priority for the morning slot when there's one
               // worth bragging about (3+ days) - otherwise falls back to
               // the regular rotating pool.
-              { id: 1, title: 'Arrow Puzzle', text: streakMsg || pickDailyMessage(REMINDER_MESSAGE_POOL.morning), hour: 9, minute: 0 },
+              { id: 1, title: 'Arrow Puzzle', text: streakMsg || pickDailyMessage(REMINDER_MESSAGE_POOL.morning), hour: morningTime.hour, minute: morningTime.minute },
               // Evening slot is the "progress" slot when there's something
               // worth teasing - otherwise it just falls back to the pool.
-              { id: 2, title: 'Arrow Puzzle', text: progressMsg || pickDailyMessage(REMINDER_MESSAGE_POOL.evening), hour: 18, minute: 0 },
-              { id: 3, title: 'Arrow Puzzle', text: pickDailyMessage(REMINDER_MESSAGE_POOL.night), hour: 22, minute: 0 }
+              { id: 2, title: 'Arrow Puzzle', text: progressMsg || pickDailyMessage(REMINDER_MESSAGE_POOL.evening), hour: eveningTime.hour, minute: eveningTime.minute },
+              { id: 3, title: 'Arrow Puzzle', text: pickDailyMessage(REMINDER_MESSAGE_POOL.night), hour: nightTime.hour, minute: nightTime.minute }
           ];
       }
 
@@ -6915,111 +8040,6 @@ function buildLayout(fast, timeBudgetOverrideMs){
               scheduleReminderNotifications(); // rebuild all 3 with fresh text/progress before re-arming
           }, delay);
           browserReminderTimeouts.push(timeoutId);
-      }
-
-      // ---------------------------------------------------------------
-      // Launch countdown notifications - TEMPORARY, pre-launch only.
-      // One creative notification per remaining day, counting down to the
-      // Play Store launch date below. This is a short, self-expiring
-      // campaign (not part of the regular REMINDER_MESSAGE_POOL rotation)
-      // meant to keep testers opening the app daily in the run-up to
-      // launch. Safe to delete this whole block (and its call site below)
-      // once the game is actually live - it naturally stops firing on its
-      // own once LAUNCH_COUNTDOWN_TARGET_DATE has passed, since
-      // buildLaunchCountdownNotifications() only ever returns entries for
-      // today-through-launch-day.
-      // ---------------------------------------------------------------
-      const LAUNCH_COUNTDOWN_TARGET_DATE = '2026-08-24'; // 8 days from 2026-08-16
-      const LAUNCH_COUNTDOWN_HOUR = 12;   // fires at 12:30pm local - clear of the 9am/6pm/10pm reminder slots
-      const LAUNCH_COUNTDOWN_MINUTE = 30;
-      // ids offset well clear of the reminder ids (1/2/3) and the update-
-      // notification id, so scheduling one set never clobbers the other.
-      const LAUNCH_COUNTDOWN_ID_BASE = 500;
-
-      const LAUNCH_COUNTDOWN_COPY = {
-          8: '🚀 8 days to launch! Every level you play now helps get Arrow Puzzle ready for the world.',
-          7: '⏳ 7 days to go — squeeze in a quick puzzle today?',
-          6: '🎯 6 days left. You\'re part of the crew getting this game launch-ready!',
-          5: '🔥 5 days to launch — halfway through the countdown, don\'t stop now!',
-          4: '🧩 4 days left. One more level keeps the countdown moving.',
-          3: '📣 3 days to go! Almost there — thanks for playing.',
-          2: '⚡ 2 days left! The finish line is in sight.',
-          1: '🎉 1 day to launch! Last stretch - play a level to celebrate!',
-          0: '🚀 Launch day is here! Thank you for helping Arrow Puzzle make it to the Play Store.'
-      };
-
-      // Builds one notification per day from today through the target
-      // launch date (inclusive), using the local device calendar day - so
-      // this always reflects "days left" from whenever the player actually
-      // opens the app, not a value baked in at build time. Returns an
-      // empty array once the target date is in the past.
-      function buildLaunchCountdownNotifications(){
-          const target = new Date(LAUNCH_COUNTDOWN_TARGET_DATE + 'T00:00:00');
-          const today = new Date();
-          today.setHours(0,0,0,0);
-          target.setHours(0,0,0,0);
-
-          const notifications = [];
-          const msPerDay = 86400000;
-          let dayCursor = new Date(today);
-          let index = 0;
-
-          while(dayCursor <= target){
-              const daysLeft = Math.round((target.getTime() - dayCursor.getTime()) / msPerDay);
-              const text = LAUNCH_COUNTDOWN_COPY[daysLeft] ||
-                  (daysLeft + ' days to launch! Keep the streak going.');
-              const fireAt = new Date(dayCursor);
-              fireAt.setHours(LAUNCH_COUNTDOWN_HOUR, LAUNCH_COUNTDOWN_MINUTE, 0, 0);
-
-              // If today's slot time has already passed, skip straight to
-              // tomorrow's entry instead of firing an "8 days left" message
-              // at 11pm tonight for a day that's basically already over.
-              if(fireAt.getTime() > Date.now()){
-                  notifications.push({
-                      id: LAUNCH_COUNTDOWN_ID_BASE + index,
-                      title: 'Arrow Puzzle',
-                      text,
-                      at: fireAt
-                  });
-              }
-
-              dayCursor = new Date(dayCursor.getTime() + msPerDay);
-              index++;
-          }
-          return notifications;
-      }
-
-      function scheduleLaunchCountdownNotifications(){
-          const notifications = buildLaunchCountdownNotifications();
-          if(notifications.length === 0) return; // target date passed, or nothing left today
-
-          const hasLocalNotification = window.cordova && window.cordova.plugins &&
-              window.cordova.plugins.notification && window.cordova.plugins.notification.local;
-          if(!hasLocalNotification) return;
-
-          const local = window.cordova.plugins.notification.local;
-          const doSchedule = () => {
-              const ids = notifications.map(item => item.id);
-              local.cancel(ids, () => {
-                  local.schedule(notifications.map((item) => ({
-                      id: item.id,
-                      title: item.title,
-                      text: item.text,
-                      trigger: { at: item.at },
-                      foreground: true
-                  })));
-                  console.log('Scheduled ' + notifications.length + ' launch countdown notification(s).');
-              });
-          };
-
-          // Same Android 13+ POST_NOTIFICATIONS permission dance as the
-          // regular reminders - scheduleReminderNotifications() has likely
-          // already requested this by the time this runs, so in practice
-          // this just confirms it's still granted.
-          local.hasPermission((granted) => {
-              if(granted) doSchedule();
-              else local.requestPermission((accepted) => { if(accepted) doSchedule(); });
-          });
       }
 
       function scheduleReminderNotifications() {
@@ -7097,18 +8117,62 @@ function buildLayout(fast, timeBudgetOverrideMs){
       // repeat press and exited the app. This block now only schedules
       // reminder notifications on deviceready.
       document.addEventListener('deviceready', () => {
-          scheduleReminderNotifications();
-          scheduleLaunchCountdownNotifications();
+          // One-time cleanup: earlier builds (pre-launch) scheduled a
+          // separate set of "Launch day is here!" countdown notifications
+          // that were later removed from the code entirely once the game
+          // actually went live - but that removal only stopped NEW
+          // installs from ever seeing them. Anyone who sideloaded this
+          // build as an upgrade over that older APK (rather than a clean
+          // uninstall/reinstall) still has those old notifications sitting
+          // in the OS/plugin's persisted schedule, since upgrading an APK
+          // doesn't clear app data - and scheduleReminderNotifications()
+          // below only ever cancels its own ids (1/2/3), never touches
+          // whatever ids that old system used. cancelAll() wipes every
+          // previously scheduled notification (legacy or otherwise) once,
+          // so the very next call - scheduleReminderNotifications() -
+          // starts from a guaranteed-clean slate. Guarded by a localStorage
+          // flag so it's a true one-time migration, not a wasteful
+          // full cancel/rebuild on every single cold start.
+          const hasLocalNotification = window.cordova && window.cordova.plugins &&
+              window.cordova.plugins.notification && window.cordova.plugins.notification.local;
+
+          // Smart notification timing: listen once for the player actually
+          // tapping a reminder notification (not just opening the app some
+          // other way) and use that real tap time to ease tomorrow's time
+          // for that same slot - see learnNotificationTapTime() above.
+          // Registered once here (deviceready only fires once), not inside
+          // scheduleReminderNotifications() which reruns on every
+          // pause/resume - re-registering there would stack up duplicate
+          // 'click' handlers and fire the learning logic multiple times
+          // per single tap.
+          if(hasLocalNotification){
+              window.cordova.plugins.notification.local.on('click', (notification) => {
+                  try{
+                      learnNotificationTapTime(notification.id, new Date());
+                  }catch(e){ console.warn('[notif] failed to learn tap time', e); }
+                  // Rebuild immediately so the newly-learned time is what
+                  // actually gets armed for tomorrow, rather than waiting
+                  // for the next natural pause/resume to pick it up.
+                  scheduleReminderNotifications();
+              });
+          }
+
+          const alreadyPurged = localStorage.getItem('legacyNotificationsPurged') === '1';
+          if(hasLocalNotification && !alreadyPurged){
+              window.cordova.plugins.notification.local.cancelAll(() => {
+                  localStorage.setItem('legacyNotificationsPurged', '1');
+                  scheduleReminderNotifications();
+              });
+          } else {
+              scheduleReminderNotifications();
+          }
 
           // Re-arm with fresh copy every time the player leaves or returns
           // to the app, not just once at launch - this is what lets the
           // "X levels to your next pattern" message reflect their actual
-          // current progress instead of going stale after install day. It
-          // also keeps the launch countdown's "days left" honest if the
-          // app is left open/backgrounded across midnight.
+          // current progress instead of going stale after install day.
           document.addEventListener('pause', scheduleReminderNotifications, false);
           document.addEventListener('resume', scheduleReminderNotifications, false);
-          document.addEventListener('resume', scheduleLaunchCountdownNotifications, false);
 
           // Check for a newer published version - once at launch, and again
           // whenever the player returns to the app (throttled internally
@@ -7135,8 +8199,16 @@ function buildLayout(fast, timeBudgetOverrideMs){
       // Slight delay so the menu is fully up first, and so this loses
       // the race to any popup that was already about to show (update
       // check, hosted announcement) rather than flashing in first only
-      // to get immediately covered.
-      setTimeout(() => maybeShowWhatsNew(), 400);
+      // to get immediately covered. A first-ever launch gets the Welcome
+      // overview instead of "What's New" - showing both back to back
+      // would just be two overlapping intros for the same handful of
+      // features, so "What's New" is skipped entirely this launch (it
+      // resumes normally from the next launch onward).
+      if(isNewInstall){
+          setTimeout(() => maybeShowWelcomeFeatures(), 400);
+      } else {
+          setTimeout(() => maybeShowWhatsNew(), 400);
+      }
 })();
 </script>
 </body>
