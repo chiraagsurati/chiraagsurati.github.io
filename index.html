@@ -171,6 +171,31 @@ h1{
 #dailyBtn.show-new-badge .newBadge{
     display:block;
 }
+/* Small plain reminder dot on the Pattern menu button - shown once the
+   player has enough gold coins to buy at least one still-locked pattern,
+   nudging them toward the Pattern menu instead of leaving coins unspent.
+   Deliberately just a plain dot (no "NEW" text) since this isn't a
+   one-time announcement like the Daily/Shuffle badges - it should keep
+   quietly reappearing any time coins + a locked pattern both exist,
+   toggled by updatePatternReminderDot(). */
+#patternBtn{
+    position:relative; /* anchors the reminder dot to the button's corner */
+}
+#patternBtn .coinDot{
+    display:none; /* shown only via .show-coin-dot, see updatePatternReminderDot() */
+    position:absolute;
+    top:-4px;
+    right:-4px;
+    width:11px;
+    height:11px;
+    background:#ff4d4d;
+    border-radius:50%;
+    box-shadow:0 2px 5px rgba(0,0,0,.3), 0 0 0 2px #fff;
+    pointer-events:none;
+}
+#patternBtn.show-coin-dot .coinDot{
+    display:block;
+}
 /* Sound and Report Bug: moved out of the main menu button list and into
    fixed corner badges at the bottom of the screen (mirroring coinBadge/
    streakBadge up top) - icon-only, no text label, same footprint as
@@ -327,6 +352,24 @@ h1{
     font-size:10.8px;  /* 9px * 1.2 */
     letter-spacing:.2px;
     position:relative; /* anchors the "NEW" badge to the button's corner */
+}
+/* Total gold coin counter shown in the zoomControls row (below the board,
+   beside the Grid toggle) - Daily Challenge only, see
+   updateDailyCoinCounter(). Reuses the .zoomBtn pill shape but with the
+   same gold color scheme as #coinBadge so it reads as a coin total, not
+   another action button. Hidden by default; JS flips display to flex
+   only while dailyChallengeActive. */
+#dailyCoinCounter{
+    width:auto;
+    min-width:52px;
+    padding:0 10px;
+    gap:4px;
+    font-size:13px;
+    font-weight:800;
+    background:#fff7e0;
+    color:#8a6a12;
+    cursor:default;
+    display:none;
 }
 #hardShuffleToggleBtn .newBadge{
     display:none; /* shown only via the .show-new-badge class, see updateHardShuffleToggleBtn() */
@@ -547,6 +590,7 @@ h1{
     <button id="zoomInBtn" class="zoomBtn" title="Zoom in">+</button>
     <button id="zoomOutBtn" class="zoomBtn" title="Zoom out">−</button>
     <button id="gridToggleBtn" class="zoomBtn" title="Show arrow path grid">▦</button>
+    <div id="dailyCoinCounter" class="zoomBtn" title="Total gold coins">🪙 <span id="dailyCoinCounterValue">0</span></div>
     <button id="hardShuffleToggleBtn" class="zoomBtn" title="Hard mode shuffle on/off">
       <span class="switchKnob" aria-hidden="true"></span>
       <span class="switchLabel">Shuffle</span>
@@ -572,7 +616,7 @@ h1{
 
         <button id="modeBtn">Mode</button>
 
-        <button id="patternBtn">Pattern</button>
+        <button id="patternBtn"><span id="patternBtnLabel">Pattern</span><span id="patternCoinDot" class="coinDot" aria-hidden="true"></span></button>
 
         <button id="dailyBtn">📅 Daily Challenge<span id="dailyNewBadge" class="newBadge">NEW</span></button>
 
@@ -1360,14 +1404,43 @@ h1{
   // pile up on the main thread and block a real tap for 10-15+ seconds.
   const BACKGROUND_WARM_TIME_BUDGET_MS = 500;
 
-  function precomputeDailyBoard(dateStr){
+  // options: {fast, timeBudgetMs} - lets a caller ask for a bigger/slower
+  // search than the default tight background-warm budget below. Used by
+  // the boot-time "today" precompute (see its call site), which is the
+  // one board every player is actually about to see and can afford a
+  // proper search; the multi-day calendar warm-up further down keeps the
+  // original tight defaults so browsing old dates never stacks up several
+  // slow builds on the main thread.
+  function precomputeDailyBoard(dateStr, options){
     if(!dateStr || dailyBoardCache[dateStr]) return;
     const savedRows = ROWS, savedCols = COLS, savedMinLen = MIN_ARROW_LENGTH, savedMaxSteps = MAX_STEPS;
     try{
       const cfg = getDailyLevelConfig(dateStr); // seeds rng() itself
       ROWS = cfg.rows; COLS = cfg.cols; MIN_ARROW_LENGTH = cfg.minArrowLength; MAX_STEPS = cfg.maxSteps;
-      const layout = buildLayout(true, BACKGROUND_WARM_TIME_BUDGET_MS);
-      dailyBoardCache[dateStr] = {rows: ROWS, cols: COLS, grid: layout.grid, paths: layout.paths};
+      const fast = !(options && options.fast === false);
+      // undefined timeBudgetMs lets buildLayout use its own full default
+      // (2500ms/1200ms) budget - only the tight background-warm case gets
+      // the explicit 500ms cap.
+      const timeBudgetMs = (options && typeof options.timeBudgetMs === 'number')
+          ? options.timeBudgetMs
+          : (fast ? BACKGROUND_WARM_TIME_BUDGET_MS : undefined);
+      let layout = buildLayout(fast, timeBudgetMs);
+      // The larger Very Hard (weekend) boards can burn through the tight
+      // background budget above without the real generator ever finding a
+      // solvable candidate, which forces buildLayout() all the way down to
+      // the guaranteed-solvable-but-repetitive emergency serpentine layout
+      // (buildFallbackLayout - every arrow left/right, same cramped
+      // zigzag shape repeated down the board). Caching that and serving it
+      // for the rest of the day is exactly the "these arrows should never
+      // appear" bug - so if the first pass came back tagged isFallback,
+      // give it exactly one more try with the full interactive budget
+      // before accepting it. Re-seeding first keeps this deterministic
+      // per date rather than drawing a different random board.
+      if(layout.isFallback){
+          seedDailyRng(dateStr);
+          layout = buildLayout(false);
+      }
+      dailyBoardCache[dateStr] = {rows: ROWS, cols: COLS, grid: layout.grid, paths: layout.paths, isFallback: !!layout.isFallback};
     }catch(e){
       // Background/opportunistic work only - if it fails for any reason
       // (low memory, unexpected board size, etc) just skip the cache.
@@ -1398,6 +1471,46 @@ h1{
     const dates = getDailyChallengeDates();
     return dates.length > 0 && dates.every(dateStr => isDailyCompleted(dateStr));
   }
+  // True if any playable Daily Challenge date in the given calendar month
+  // (year + 0-indexed month) is still incomplete.
+  function monthHasIncompleteDailyDate(year, month){
+    const dates = getDailyChallengeDates();
+    return dates.some(dateStr => {
+      if(isDailyCompleted(dateStr)) return false;
+      const dt = new Date(dateStr + 'T00:00:00Z');
+      return dt.getUTCFullYear() === year && dt.getUTCMonth() === month;
+    });
+  }
+  // Nearest calendar month (year+month) that still has an unfinished
+  // playable Daily Challenge date, relative to anchorDateStr (the day the
+  // player just finished). Checks FORWARD first - one month at a time, up
+  // to the current month - so clearing June still leads to July, or
+  // straight on to August if July's also already done (the original
+  // ask). Only if there's nothing incomplete ahead does it fall back to
+  // the nearest month BEHIND the anchor, one step at a time, rather than
+  // jumping straight to the very first incomplete month overall - so
+  // clearing this month (with, say, January-August all still untouched)
+  // lands on August, not January. Returns null when every playable date
+  // is completed, so callers can fall back to showing the current month.
+  function getNearestIncompleteDailyMonth(anchorDateStr){
+    const anchor = new Date(anchorDateStr + 'T00:00:00Z');
+    const todayDt = new Date(getTodayDateStr() + 'T00:00:00Z');
+    const startDt = new Date(DAILY_CHALLENGE_START + 'T00:00:00Z');
+
+    let y = anchor.getUTCFullYear(), m = anchor.getUTCMonth();
+    while(y < todayDt.getUTCFullYear() || (y === todayDt.getUTCFullYear() && m < todayDt.getUTCMonth())){
+      m++; if(m > 11){ m = 0; y++; }
+      if(monthHasIncompleteDailyDate(y, m)) return {year: y, month: m};
+    }
+
+    y = anchor.getUTCFullYear(); m = anchor.getUTCMonth();
+    while(y > startDt.getUTCFullYear() || (y === startDt.getUTCFullYear() && m > startDt.getUTCMonth())){
+      m--; if(m < 0){ m = 11; y--; }
+      if(monthHasIncompleteDailyDate(y, m)) return {year: y, month: m};
+    }
+
+    return null;
+  }
   function startDailyChallenge(dateStr){
     dailyChallengeActive = true;
     dailyChallengeDate = dateStr;
@@ -1417,10 +1530,24 @@ h1{
     goldCoins += n;
     saveCoins();
     updateCoinBadge();
+    updateDailyCoinCounter();
+    if(typeof updatePatternReminderDot === 'function') updatePatternReminderDot();
   }
   function updateCoinBadge(){
     const el = document.getElementById('coinBadge');
     if(el) el.textContent = '\uD83E\uDE99 ' + goldCoins;
+  }
+  // Total gold coin counter in the zoomControls row (below the board,
+  // beside the Grid toggle button) - only shown during Daily Challenge.
+  // Called from addGoldCoins() so it stays live as levels are cleared,
+  // and alongside updateHardShuffleToggleBtn() at every mode-switch/
+  // level-start call site so it shows/hides in step with Daily mode.
+  function updateDailyCoinCounter(){
+    const el = document.getElementById('dailyCoinCounter');
+    if(!el) return;
+    el.style.display = dailyChallengeActive ? 'flex' : 'none';
+    const valueEl = document.getElementById('dailyCoinCounterValue');
+    if(valueEl) valueEl.textContent = goldCoins;
   }
 
   // ---- Pattern purchases (gold coins) ----
@@ -1446,6 +1573,8 @@ h1{
     purchasedPatterns.push(type);
     saveProgress();
     updateCoinBadge();
+    if(typeof updateDailyCoinCounter === 'function') updateDailyCoinCounter();
+    if(typeof updatePatternReminderDot === 'function') updatePatternReminderDot();
     return true;
   }
 
@@ -1689,7 +1818,7 @@ h1{
   // same value AFTER the new build is live on Play Store (not before -
   // otherwise players get nagged to update before the update even exists
   // on the Store yet).
-  const APP_VERSION = '2.3.8'; // game version
+  const APP_VERSION = '2.4.0'; // game version
   document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 
   const VERSION_CHECK_URL = 'https://raw.githubusercontent.com/chiraagsurati/arrow_puzzle/main/version.json';
@@ -2583,6 +2712,7 @@ h1{
       gameMode = mode;
       applyLevelConfig();
       if(typeof updateHardShuffleToggleBtn === 'function') updateHardShuffleToggleBtn();
+      if(typeof updateDailyCoinCounter === 'function') updateDailyCoinCounter();
   }
 
 
@@ -2594,7 +2724,8 @@ h1{
             const patternLabel = currentPattern === 'auto'
                 ? 'Auto'
                 : (PATTERN_DISPLAY_NAMES[currentPattern] || currentPattern);
-            document.getElementById("patternBtn").textContent = "Pattern : " + patternLabel;
+            document.getElementById("patternBtnLabel").textContent = "Pattern : " + patternLabel;
+            updatePatternReminderDot();
 
             // "NEW" badge on Daily Challenge: only while today's own
             // challenge (not just "any" challenge) hasn't been played yet.
@@ -2606,6 +2737,21 @@ h1{
                 const todayIsPlayable = todayStr >= DAILY_CHALLENGE_START;
                 dailyBtnEl.classList.toggle('show-new-badge', todayIsPlayable && !isDailyCompleted(todayStr));
             }
+      }
+      // Reminder dot on the Pattern button: on whenever the player can
+      // actually afford to buy at least one still-locked pattern right
+      // now (enough coins AND at least one ARROW_PATTERN_TYPES entry not
+      // yet unlocked/purchased for the current mode) - nudges them toward
+      // spending coins instead of just sitting on them. Called from
+      // updateMenuStatus() (mode/level/pattern changes) and addGoldCoins()
+      // (so it appears live the moment a coin total crosses the
+      // threshold, without needing the menu to be reopened).
+      function updatePatternReminderDot(){
+          const btn = document.getElementById("patternBtn");
+          if(!btn) return;
+          const canAffordSomething = goldCoins >= PATTERN_BUY_COST &&
+              ARROW_PATTERN_TYPES.some(type => !isPatternUnlocked(type, gameMode));
+          btn.classList.toggle('show-coin-dot', canAffordSomething);
       }
 
          function showMenu(){
@@ -2638,6 +2784,7 @@ h1{
             const zoomControlsEl1 = document.querySelector('.zoomControls');
             if(zoomControlsEl1) zoomControlsEl1.style.display = 'flex';
             if(typeof updateHardShuffleToggleBtn === 'function') updateHardShuffleToggleBtn();
+            if(typeof updateDailyCoinCounter === 'function') updateDailyCoinCounter();
 
             // Give the device/browser back button something to return from:
             // pressing back while playing should reopen the menu, not exit
@@ -2662,6 +2809,7 @@ h1{
             const zoomControlsEl2 = document.querySelector('.zoomControls');
             if(zoomControlsEl2) zoomControlsEl2.style.display = 'flex';
             if(typeof updateHardShuffleToggleBtn === 'function') updateHardShuffleToggleBtn();
+            if(typeof updateDailyCoinCounter === 'function') updateDailyCoinCounter();
             startSessionHeartbeat();
         }
 
@@ -2912,7 +3060,14 @@ h1{
               }
               let layout;
               const cached = dailyChallengeActive ? dailyBoardCache[dailyChallengeDate] : null;
-              if(cached){
+              // A cache entry tagged isFallback means even the background
+              // precompute's extra retry (see precomputeDailyBoard)
+              // couldn't find a real solvable layout in time and settled
+              // for the guaranteed-solvable-but-repetitive emergency
+              // serpentine board. Don't hand the player that - fall
+              // through to a live, synchronous generation attempt instead,
+              // same as if nothing had been cached at all.
+              if(cached && !cached.isFallback){
                   // Board was already built ahead of time (see
                   // precomputeDailyBoard) - use it directly instead of
                   // generating again, so this is instant. ROWS/COLS were
@@ -2928,6 +3083,9 @@ h1{
                   // same day after a game-over is instant too, not just
                   // the first attempt.
               } else {
+                  if(cached && cached.isFallback){
+                      console.warn('[daily] cached board was the emergency fallback layout; regenerating live for', dailyChallengeDate);
+                  }
                   // fast: quality tradeoff (a few more short arrows) is well
                   // worth it here - this runs synchronously behind the
                   // loading overlay. Board size is fixed per mode (doesn't
@@ -2961,6 +3119,9 @@ h1{
                   console.warn('[board] rejected legacy straight-row layout; rebuilding with current generator');
                   layout = buildFallbackLayout();
               }
+              if(layout.isFallback){
+                  console.warn('[board] using emergency fallback layout - real generator could not find a solvable board in time', {mode: gameMode, daily: dailyChallengeActive, date: dailyChallengeDate, rows: ROWS, cols: COLS});
+              }
 
               grid = layout.grid;
               pathsMap = new Map(
@@ -2974,6 +3135,7 @@ h1{
               showGrid = false;
               if(typeof updateGridToggleBtn === 'function') updateGridToggleBtn();
               if(typeof updateHardShuffleToggleBtn === 'function') updateHardShuffleToggleBtn();
+              if(typeof updateDailyCoinCounter === 'function') updateDailyCoinCounter();
               try{ localStorage.setItem(GRID_PREF_KEY, '0'); }catch(e){}
               resetZoomPan();
               // hideMenu() must run BEFORE layoutCanvas(): it's what sets
@@ -3427,10 +3589,11 @@ h1{
             }
             if(isLocked){
                 // Locked rows are informational only EXCEPT for the lock
-                // badge itself - tapping it purchases the pattern with
-                // coins (if affordable) and refreshes the popup in place
-                // so it now shows unlocked/selectable. Tapping anywhere
-                // else on a locked row does nothing, same as before.
+                // badge itself - tapping it opens a confirm-before-you-buy
+                // popup (with a live preview of the pattern) rather than
+                // spending coins immediately on a single tap. Tapping
+                // anywhere else on a locked row does nothing, same as
+                // before.
                 btn.onclick = (e) => {
                     e.stopPropagation();
                     const badge = e.target.closest('.patternLockOverlay');
@@ -3441,9 +3604,7 @@ h1{
                         setTimeout(() => { badge.style.transform = ''; }, 150);
                         return;
                     }
-                    if(buyPattern(type)){
-                        document.getElementById("patternBtn").onclick();
-                    }
+                    showPatternBuyConfirmPopup(type);
                 };
                 return;
             }
@@ -3478,8 +3639,104 @@ h1{
         };
     };
 
+    // Confirmation popup shown before a pattern purchase actually goes
+    // through - a live preview of the arrow pattern plus its cost, with
+    // explicit Buy/Cancel buttons, so a tap on the lock badge can't spend
+    // coins by accident. Only ever opened after the affordability check in
+    // the lock-badge handler above, so goldCoins >= PATTERN_BUY_COST is
+    // already guaranteed here.
+    function showPatternBuyConfirmPopup(type){
+        const old = document.getElementById("patternBuyConfirmPopup");
+        if(old) old.remove();
+
+        const popup = document.createElement("div");
+        popup.id = "patternBuyConfirmPopup";
+        popup.style.cssText = `
+            position:fixed; top:0; right:0; bottom:0; left:0;
+            background:rgba(0,0,0,.5);
+            display:flex; justify-content:center; align-items:center;
+            z-index:100000;
+        `;
+
+        popup.innerHTML = `
+            <div style="
+                background:white;
+                padding:22px;
+                border-radius:20px;
+                width:270px;
+                max-width:85vw;
+                text-align:center;
+                box-shadow:0 15px 40px rgba(0,0,0,.3);
+            ">
+                <div style="font-size:17px;font-weight:bold;color:#2c2f4a;margin-bottom:14px;">
+                    Buy "${PATTERN_DISPLAY_NAMES[type] || type}"?
+                </div>
+                <canvas id="patternBuyPreviewCanvas" width="220" height="72" style="
+                    border-radius:10px;
+                    background:#eeecf5;
+                    display:block;
+                    margin:0 auto 14px;
+                "></canvas>
+                <div style="font-size:13.5px;color:#666;line-height:1.5;margin-bottom:18px;">
+                    Unlocks this pattern for Easy, Medium &amp; Hard.<br>
+                    Cost: <strong style="color:#2c2f4a;">\uD83E\uDE99 ${PATTERN_BUY_COST}</strong>
+                    &nbsp;&middot;&nbsp; You have <strong style="color:#2c2f4a;">\uD83E\uDE99 ${goldCoins}</strong>
+                </div>
+                <div style="display:flex; gap:10px;">
+                    <button id="patternBuyCancelBtn" style="
+                        flex:1; padding:11px 0; border:none; border-radius:12px;
+                        background:#eceaf2; color:#2c2f4a; font-weight:bold; font-size:14px;
+                    ">Cancel</button>
+                    <button id="patternBuyConfirmBtn" style="
+                        flex:1; padding:11px 0; border:none; border-radius:12px;
+                        background:#c9971c; color:#fff; font-weight:bold; font-size:14px;
+                    ">Buy \uD83E\uDE99${PATTERN_BUY_COST}</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(popup);
+
+        // Preview canvas only exists once appended - draw the actual
+        // pattern now, same renderer used for the small swatches in the
+        // pattern list, just at a larger size so it's a genuine "here's
+        // what you're buying" look rather than a tiny thumbnail.
+        drawPatternPreviewIcon(type, document.getElementById("patternBuyPreviewCanvas"));
+
+        const close = () => popup.remove();
+
+        document.getElementById("patternBuyCancelBtn").onclick = close;
+        document.getElementById("patternBuyConfirmBtn").onclick = () => {
+            if(buyPattern(type)){
+                close();
+                // Refresh the underlying pattern list so it now shows this
+                // pattern unlocked/selectable, and refresh the main menu
+                // (Pattern button label + coin reminder dot) behind it.
+                const patternBtnEl = document.getElementById("patternBtn");
+                if(patternBtnEl) patternBtnEl.onclick();
+                if(typeof updateMenuStatus === 'function') updateMenuStatus();
+            } else {
+                // Coins changed out from under us (e.g. spent elsewhere in
+                // another tab/session) between opening this popup and
+                // confirming - just close without pretending it worked.
+                close();
+            }
+        };
+        popup.onclick = (e) => {
+            if(e.target === popup) close();
+        };
+    }
+
         // ---- Daily Challenge: calendar popup ----
-        function showDailyCalendarPopup(initialDateStr){
+        // jumpAnchorDateStr: only used by the post-completion redirect
+        // (see completeDailyChallenge) - pass the day the player just
+        // finished, and the calendar lands on the NEAREST month (checking
+        // forward first, then backward) that still has something left,
+        // relative to that day - see getNearestIncompleteDailyMonth. A
+        // normal open (Daily button, or fresh install) should always show
+        // the CURRENT month first so recent days are front and center,
+        // not January just because nothing's been played yet.
+        function showDailyCalendarPopup(initialDateStr, jumpAnchorDateStr){
 
             const old = document.getElementById("dailyPopup");
             if(old) old.remove();
@@ -3493,11 +3750,28 @@ h1{
                 z-index:99999;
             `;
 
-            const initialDate = initialDateStr
-                ? new Date(initialDateStr + 'T00:00:00Z')
-                : new Date();
-            let viewYear = initialDate.getUTCFullYear();
-            let viewMonth = initialDate.getUTCMonth(); // 0-indexed, UTC to match dateStr logic elsewhere
+            // Default view: the CURRENT month, so opening Daily Challenge
+            // always leads with the most recent days first (a brand new
+            // install lands on this month, not January just because
+            // nothing's been played yet). The only exception is the
+            // post-completion redirect, which explicitly asks to jump to
+            // the nearest month (forward first, then backward) still
+            // holding a skipped day.
+            let viewYear, viewMonth;
+            if(initialDateStr){
+                const initialDate = new Date(initialDateStr + 'T00:00:00Z');
+                viewYear = initialDate.getUTCFullYear();
+                viewMonth = initialDate.getUTCMonth(); // 0-indexed, UTC to match dateStr logic elsewhere
+            } else if(jumpAnchorDateStr){
+                const nearestIncomplete = getNearestIncompleteDailyMonth(jumpAnchorDateStr);
+                const now = new Date();
+                viewYear = nearestIncomplete ? nearestIncomplete.year : now.getUTCFullYear();
+                viewMonth = nearestIncomplete ? nearestIncomplete.month : now.getUTCMonth();
+            } else {
+                const now = new Date();
+                viewYear = now.getUTCFullYear();
+                viewMonth = now.getUTCMonth();
+            }
 
             popup.innerHTML = `
                 <div style="
@@ -4358,7 +4632,7 @@ function buildFallbackLayout(){
         addPath(cells, 'left');
     }
 
-    return {grid, paths, clearId};
+    return {grid, paths, clearId, isFallback: true};
 }
 
 // fast=true trims the search budget down - used for mid-game checkpoint
@@ -6670,13 +6944,20 @@ function buildLayout(fast, timeBudgetOverrideMs){
                     startDailyChallenge(nextDateStr);
                 } else if(anyIncompleteDateLeft){
                     // Tomorrow's either not out yet or already done, but
-                    // some OTHER day (most likely an older, skipped one) is
-                    // still unfinished - keep the player on the calendar
-                    // instead of the menu so they can pick it up right
-                    // away, rather than having to find the Daily button
-                    // again.
+                    // some OTHER day is still unfinished - keep the player
+                    // on the calendar instead of the menu so they can pick
+                    // it up right away, rather than having to find the
+                    // Daily button again. Anchor the search on dateStr (the
+                    // day just finished, captured above before it's reset)
+                    // so the calendar lands on the NEAREST month with
+                    // something left - checking forward first (so clearing
+                    // June still leads to July/August), then falling back
+                    // to the closest month behind it (so clearing this
+                    // month doesn't fling the player all the way back to
+                    // January when everything before it is also unplayed)
+                    // - see getNearestIncompleteDailyMonth.
                     showMenu();
-                    showDailyCalendarPopup(dateStr);
+                    showDailyCalendarPopup(null, dateStr);
                 } else {
                     // Every playable day is done - nothing left to jump to.
                     showMenu();
@@ -6737,9 +7018,18 @@ function buildLayout(fast, timeBudgetOverrideMs){
   // radius (paths running close together), we don't treat that as an
   // unresolvable miss - we just take whichever arrow's line the touch is
   // actually closest to.
+  //
+  // 0.45 was the original value, but a screen recording showed a tap
+  // landing roughly in the middle of the empty cell right next to an
+  // arrow's tip registering as a dead no-op - a completely reasonable
+  // "close to the arrow" touch that still missed. Pixel-measuring that
+  // exact tap against the line put it at ~0.9x cellSize away, so raised
+  // this to a full cell's width (1.0) - comfortable margin over that
+  // measurement, and still just "the arrow's own cell plus its
+  // immediate neighbors," not the whole board.
   // Purely an input-handling change - doesn't touch board
   // generation/solvability or which cells logically belong to which arrow.
-  const ARROW_HIT_RADIUS_FACTOR = 0.45; // fraction of a cell's size
+  const ARROW_HIT_RADIUS_FACTOR = 1.0; // fraction of a cell's size
 
   // Shortest distance from point (px,py) to the segment (x0,y0)-(x1,y1).
   function distToSegment(px, py, x0, y0, x1, y1){
@@ -7089,6 +7379,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
   }catch(e){}
   updateGridToggleBtn();
   updateHardShuffleToggleBtn();
+  if(typeof updateDailyCoinCounter === 'function') updateDailyCoinCounter();
   gridToggleBtn.onclick = () => {
     showGrid = !showGrid;
     updateGridToggleBtn();
@@ -7687,6 +7978,7 @@ function buildLayout(fast, timeBudgetOverrideMs){
         loadCoins();
         loadThemeState();
         updateCoinBadge();
+        if(typeof updateDailyCoinCounter === 'function') updateDailyCoinCounter();
 
         // Build today's Daily Challenge board ahead of time, deferred a
         // beat so it never competes with the initial menu paint - by the
@@ -7699,7 +7991,12 @@ function buildLayout(fast, timeBudgetOverrideMs){
         setTimeout(() => {
             if(isLowEndDevice()) return;
             const todayStr = getTodayDateStr();
-            if(todayStr >= DAILY_CHALLENGE_START) precomputeDailyBoard(todayStr);
+            // fast:false -> full search budget, not the tight background-
+            // warm default (see precomputeDailyBoard) - this is the one
+            // board every player is actually about to open today, so it's
+            // worth the extra moment at boot to avoid landing on the
+            // guaranteed-solvable-but-repetitive emergency layout.
+            if(todayStr >= DAILY_CHALLENGE_START) precomputeDailyBoard(todayStr, {fast:false});
         }, 400);
 
         const hasSave = loadGameState();
